@@ -22,7 +22,8 @@ shared with Slot on the TrimUI Brick and the RG SP. Put the same cloudsync.ini a
     username=me
     password=secret
 (roms=0 leaves the games out; enabled=0 stops it). The saves and states sync on their own; Settings > Network >
-Cloud sync > Sync now does the games too. File sharing never shows cloudsync.ini.
+Cloud sync > Sync now does the games too; Cloud devices picks which of your handhelds share with this one.
+File sharing never shows cloudsync.ini.
 
 SSH (for working on Banana itself): put your public key in banana/ssh/authorized_keys, switch on
 Settings > SSH, then ssh root@<address>. Keys only, no passwords.

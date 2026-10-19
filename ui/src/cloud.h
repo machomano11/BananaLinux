@@ -4,6 +4,7 @@
 // without it nothing runs. The menu runs the saves and the states on its own (a while after the start, after each game,
 // every 10 minutes); Settings > Network > Cloud sync runs everything, the games too, and shows how far it got.
 #include <string>
+#include <vector>
 
 namespace banana
 {
@@ -13,6 +14,11 @@ namespace banana
 		bool configured(const std::string& dataDir);
 		// banana-cloud in the background ("all": the games too); nothing when one is running
 		void start(bool all);
+		// banana-cloud share <id>: start sharing with that device, or stop if this one already does
+		void share(const std::string& id);
+		// the devices on the server as the last run found them, this one first (empty before the first run)
+		struct Device { std::string id, name, space; long long seen = 0; };
+		std::vector<Device> devices();
 		// the running one stopped between files (a game is starting: it never writes under a game)
 		void stop();
 		bool running();

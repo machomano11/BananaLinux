@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
 
 use banana_cloud::layout::Banana;
-use slot_cloud::{sync_holding, sync_layout, WebDav, FOLDERS, GAMES, PROGRESS};
+use slot_cloud::{sync_holding, sync_layout, Tally, WebDav, FOLDERS, GAMES, PROGRESS};
 
 fn dav() -> WebDav {
     let url = std::env::var("BANANA_WEBDAV_URL").expect("BANANA_WEBDAV_URL");
@@ -53,7 +53,16 @@ fn a_save_goes_from_slot_to_bananaos_and_back() {
     assert_eq!(r.uploaded, 4);
 
     // the RG DS: Zelda's save comes down as RetroArch's, the DS save and the state go up; the games, then Tetris too
-    let r = sync_layout(&Banana::new(b, &systems), &bm, &mut dav(), &PROGRESS, &no, &|_| false).unwrap();
+    let r = sync_layout(
+        &Banana::new(b, &systems),
+        &bm,
+        &mut dav(),
+        &PROGRESS,
+        &no,
+        &|_| false,
+        &Tally::default(),
+    )
+    .unwrap();
     assert_eq!(
         std::fs::read(b.join("saves/Zelda.srm")).unwrap(),
         b"zelda save from the brick"
@@ -62,12 +71,30 @@ fn a_save_goes_from_slot_to_bananaos_and_back() {
     assert!(!b.join("states/0.state").exists(), "Slot's states stay on Slot");
     let mut games = PROGRESS.to_vec();
     games.push(GAMES);
-    sync_layout(&Banana::new(b, &systems), &bm, &mut dav(), &games, &no, &|_| false).unwrap();
+    sync_layout(
+        &Banana::new(b, &systems),
+        &bm,
+        &mut dav(),
+        &games,
+        &no,
+        &|_| false,
+        &Tally::default(),
+    )
+    .unwrap();
     assert_eq!(std::fs::read(b.join("roms/gb/Tetris.gb")).unwrap(), b"tetris rom");
 
     // played on the RG DS: the Brick gets the new save under its own name
     aged(&b.join("saves/Zelda.srm"), b"zelda save from the rg ds", 30);
-    let r = sync_layout(&Banana::new(b, &systems), &bm, &mut dav(), &PROGRESS, &no, &|_| false).unwrap();
+    let r = sync_layout(
+        &Banana::new(b, &systems),
+        &bm,
+        &mut dav(),
+        &PROGRESS,
+        &no,
+        &|_| false,
+        &Tally::default(),
+    )
+    .unwrap();
     assert_eq!((r.uploaded, r.downloaded, r.conflicts.len()), (1, 0, 0));
     let r = sync_holding(s, &sm, &mut dav(), &FOLDERS, &no, &|_| false).unwrap();
     assert_eq!(

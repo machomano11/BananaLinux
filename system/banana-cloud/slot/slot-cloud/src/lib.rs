@@ -25,9 +25,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub mod devices;
 pub mod webdav;
 
 pub use webdav::WebDav;
@@ -206,6 +208,66 @@ impl Report {
     }
 }
 
+/// How far a run has got, for a progress screen to read while it works.
+#[derive(Debug, Default)]
+pub struct Tally {
+    files: AtomicUsize,
+    moved: AtomicUsize,
+    name: Mutex<String>,
+    sending: AtomicBool,
+    at: AtomicU64,
+    of: AtomicU64,
+}
+
+/// A moment of a [`Tally`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Moment {
+    /// Files this run copies or deletes, once it has compared both sides.
+    pub files: usize,
+    /// Of those, how many are done (or skipped).
+    pub moved: usize,
+    /// The file being copied now, relative to the root; empty between files.
+    pub name: String,
+    /// True when it goes up to the server, false when it comes down.
+    pub sending: bool,
+    /// Bytes of it copied so far, and its size.
+    pub at: u64,
+    pub of: u64,
+}
+
+impl Tally {
+    pub fn read(&self) -> Moment {
+        Moment {
+            files: self.files.load(Ordering::Relaxed),
+            moved: self.moved.load(Ordering::Relaxed),
+            name: self.name.lock().map(|n| n.clone()).unwrap_or_default(),
+            sending: self.sending.load(Ordering::Relaxed),
+            at: self.at.load(Ordering::Relaxed),
+            of: self.of.load(Ordering::Relaxed),
+        }
+    }
+
+    fn begin(&self, files: usize) {
+        self.files.store(files, Ordering::Relaxed);
+        self.moved.store(0, Ordering::Relaxed);
+        self.copying("", false, 0);
+    }
+
+    fn copying(&self, rel: &str, sending: bool, size: u64) {
+        if let Ok(mut n) = self.name.lock() {
+            rel.clone_into(&mut n);
+        }
+        self.sending.store(sending, Ordering::Relaxed);
+        self.at.store(0, Ordering::Relaxed);
+        self.of.store(size, Ordering::Relaxed);
+    }
+
+    fn moved(&self) {
+        self.moved.fetch_add(1, Ordering::Relaxed);
+        self.copying("", false, 0);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Seen {
     local: u64,
@@ -230,9 +292,7 @@ pub fn sync(
     sync_holding(root, manifest, remote, &FOLDERS, cancel, &|_| false)
 }
 
-/// [`sync`] of just `folders` (some of [`FOLDERS`]), with the files for which
-/// `held` is true (a running game's) only uploaded when they changed here and
-/// not on the server. What the manifest knows of other folders is kept.
+/// [`sync_counted`] without anyone watching its progress.
 pub fn sync_holding(
     root: &Path,
     manifest: &Path,
@@ -241,10 +301,27 @@ pub fn sync_holding(
     cancel: &AtomicBool,
     held: &dyn Fn(&str) -> bool,
 ) -> Result<Report, Error> {
-    sync_layout(&Card(root), manifest, remote, folders, cancel, held)
+    let tally = Tally::default();
+    sync_counted(root, manifest, remote, folders, cancel, held, &tally)
 }
 
-/// [`sync_holding`] for a device whose files are where `layout` says.
+/// [`sync`] of just `folders` (some of [`FOLDERS`]), with the files for which
+/// `held` is true (a running game's) only uploaded when they changed here and
+/// not on the server. What the manifest knows of other folders is kept.
+/// `tally` follows the run as it goes.
+pub fn sync_counted(
+    root: &Path,
+    manifest: &Path,
+    remote: &mut dyn Remote,
+    folders: &[&str],
+    cancel: &AtomicBool,
+    held: &dyn Fn(&str) -> bool,
+    tally: &Tally,
+) -> Result<Report, Error> {
+    sync_layout(&Card(root), manifest, remote, folders, cancel, held, tally)
+}
+
+/// [`sync_counted`] for a device whose files are where `layout` says.
 pub fn sync_layout(
     layout: &dyn Layout,
     manifest: &Path,
@@ -252,12 +329,14 @@ pub fn sync_layout(
     folders: &[&str],
     cancel: &AtomicBool,
     held: &dyn Fn(&str) -> bool,
+    tally: &Tally,
 ) -> Result<Report, Error> {
     let mut seen = read_manifest(manifest);
     let mut run = Run {
         layout,
         remote,
         cancel,
+        tally,
         dirs: BTreeSet::new(),
         report: Report::default(),
         now: SystemTime::now(),
@@ -273,6 +352,7 @@ struct Run<'a> {
     layout: &'a dyn Layout,
     remote: &'a mut dyn Remote,
     cancel: &'a AtomicBool,
+    tally: &'a Tally,
     /// Remote folders known to exist.
     dirs: BTreeSet<String>,
     report: Report,
@@ -322,25 +402,33 @@ impl Run<'_> {
             here.max(there)
         };
         rest.sort_by_cached_key(|rel| (size(rel), rel.clone()));
-        for rel in first.into_iter().chain(rest) {
-            if settling.contains(&rel) {
-                continue;
-            }
+        // A held file that may not simply be sent is left as it is.
+        let steps: Vec<(String, Step)> = first
+            .into_iter()
+            .chain(rest)
+            .filter(|rel| !settling.contains(rel))
+            .filter_map(|rel| {
+                let l = local.get(&rel).copied();
+                let r = remote.get(&rel);
+                let step = match held(&rel) {
+                    true => Step::Upload(l.filter(|&l| only_sent(&rel, l, r, seen.get(&rel)))?),
+                    false => plan(&rel, l, r, seen.get(&rel)),
+                };
+                Some((rel, step))
+            })
+            .collect();
+        self.tally
+            .begin(steps.iter().filter(|(_, s)| s.moves()).count());
+        for (rel, step) in steps {
             if self.cancel.load(Ordering::Relaxed) {
                 self.report.cancelled = true;
                 return Ok(());
             }
-            let l = local.get(&rel).copied();
-            let r = remote.get(&rel);
-            let s = seen.get(&rel);
-            let result = if held(&rel) {
-                match l.filter(|&l| only_sent(rel.as_str(), l, r, s)) {
-                    Some(l) => self.upload(&rel, l).map(Some),
-                    None => continue,
-                }
-            } else {
-                self.one(&rel, l, r, s)
-            };
+            let moves = step.moves();
+            let result = self.one(&rel, step);
+            if moves {
+                self.tally.moved();
+            }
             match result {
                 Ok(Some(s)) => seen.insert(rel, s),
                 Ok(None) => seen.remove(&rel),
@@ -370,43 +458,22 @@ impl Run<'_> {
         Ok(())
     }
 
-    /// Brings one file in line; returns what to remember about it.
-    fn one(
-        &mut self,
-        rel: &str,
-        l: Option<Local>,
-        r: Option<&Listed>,
-        s: Option<&Seen>,
-    ) -> Result<Option<Seen>, Error> {
-        let keep = KEEP.iter().any(|k| rel.starts_with(&format!("{k}/")));
-        let local_changed = |l: Local, s: &Seen| l.mtime_ns != s.local || l.size != s.size;
-        Ok(match (l, r, s) {
-            (Some(l), Some(r), Some(s)) => match (local_changed(l, s), r.tag != s.tag) {
-                (false, false) => Some(s.clone()),
-                (true, false) => Some(self.upload(rel, l)?),
-                (false, true) => Some(self.download(rel, r)?),
-                (true, true) => Some(self.both(rel, l, r)?),
-            },
-            (Some(l), Some(r), None) if rel.starts_with("Games/") && l.size == r.size => {
-                Some(Seen {
-                    local: l.mtime_ns,
-                    size: l.size,
-                    tag: r.tag.clone(),
-                })
-            }
-            (Some(l), Some(r), None) => Some(self.both(rel, l, r)?),
-            (Some(l), None, Some(s)) if !keep && !local_changed(l, s) => {
+    /// Carries out one file's step; returns what to remember about it.
+    fn one(&mut self, rel: &str, step: Step) -> Result<Option<Seen>, Error> {
+        Ok(match step {
+            Step::Keep(s) => s,
+            Step::Upload(l) => Some(self.upload(rel, l)?),
+            Step::Download(r) => Some(self.download(rel, r)?),
+            Step::Both(l, r) => Some(self.both(rel, l, r)?),
+            Step::RemoveLocal => {
                 self.remove_local(rel)?;
                 None
             }
-            (Some(l), None, _) => Some(self.upload(rel, l)?),
-            (None, Some(r), Some(s)) if !keep && r.tag == s.tag => {
+            Step::RemoveRemote => {
                 self.remote.delete(rel)?;
                 self.report.deleted += 1;
                 None
             }
-            (None, Some(r), _) => Some(self.download(rel, r)?),
-            (None, None, _) => None,
         })
     }
 
@@ -445,9 +512,11 @@ impl Run<'_> {
             .metadata()
             .map_err(|e| Error::new(format!("reading {rel}: {e}")))?
             .len();
+        self.tally.copying(rel, true, len);
         let mut body = Watched {
             inner: file.take(len),
             cancel: self.cancel,
+            tally: self.tally,
         };
         self.remote.put(to, &mut body, len)
     }
@@ -458,6 +527,7 @@ impl Run<'_> {
         if free_bytes(self.layout.root()).is_some_and(|free| free < size.saturating_add(ROOM)) {
             return Err(Error::no_room(rel));
         }
+        self.tally.copying(rel, false, size);
         let tmp = tmp_of(&self.path(rel)?);
         let written = (|| {
             if let Some(dir) = tmp.parent() {
@@ -469,6 +539,7 @@ impl Run<'_> {
             let mut out = Watched {
                 inner: std::io::BufWriter::with_capacity(1 << 16, file),
                 cancel: self.cancel,
+                tally: self.tally,
             };
             self.remote.get(rel, &mut out)?;
             let file = out
@@ -605,6 +676,50 @@ impl Run<'_> {
     }
 }
 
+/// What one file needs to be in line on both sides.
+enum Step<'r> {
+    /// Nothing to copy; what to remember of it, if anything.
+    Keep(Option<Seen>),
+    Upload(Local),
+    Download(&'r Listed),
+    Both(Local, &'r Listed),
+    RemoveLocal,
+    RemoveRemote,
+}
+
+impl Step<'_> {
+    /// Whether it copies or deletes anything.
+    fn moves(&self) -> bool {
+        !matches!(self, Step::Keep(_))
+    }
+}
+
+fn plan<'r>(rel: &str, l: Option<Local>, r: Option<&'r Listed>, s: Option<&Seen>) -> Step<'r> {
+    let keep = KEEP.iter().any(|k| rel.starts_with(&format!("{k}/")));
+    let local_changed = |l: Local, s: &Seen| l.mtime_ns != s.local || l.size != s.size;
+    match (l, r, s) {
+        (Some(l), Some(r), Some(s)) => match (local_changed(l, s), r.tag != s.tag) {
+            (false, false) => Step::Keep(Some(s.clone())),
+            (true, false) => Step::Upload(l),
+            (false, true) => Step::Download(r),
+            (true, true) => Step::Both(l, r),
+        },
+        (Some(l), Some(r), None) if rel.starts_with("Games/") && l.size == r.size => {
+            Step::Keep(Some(Seen {
+                local: l.mtime_ns,
+                size: l.size,
+                tag: r.tag.clone(),
+            }))
+        }
+        (Some(l), Some(r), None) => Step::Both(l, r),
+        (Some(l), None, Some(s)) if !keep && !local_changed(l, s) => Step::RemoveLocal,
+        (Some(l), None, _) => Step::Upload(l),
+        (None, Some(r), Some(s)) if !keep && r.tag == s.tag => Step::RemoveRemote,
+        (None, Some(r), _) => Step::Download(r),
+        (None, None, _) => Step::Keep(None),
+    }
+}
+
 /// Whether a held file is one that may simply be sent: it changed here, and
 /// the server's copy is the one last seen (or there is none and never was).
 fn only_sent(rel: &str, l: Local, r: Option<&Listed>, s: Option<&Seen>) -> bool {
@@ -617,10 +732,12 @@ fn only_sent(rel: &str, l: Local, r: Option<&Listed>, s: Option<&Seen>) -> bool 
     }
 }
 
-/// Reads or writes through `inner` until `cancel` is set, then fails.
+/// Reads or writes through `inner` until `cancel` is set, then fails;
+/// counts the bytes on `tally`.
 struct Watched<'a, T> {
     inner: T,
     cancel: &'a AtomicBool,
+    tally: &'a Tally,
 }
 
 impl<T> Watched<'_, T> {
@@ -635,14 +752,18 @@ impl<T> Watched<'_, T> {
 impl<T: Read> Read for Watched<'_, T> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.check()?;
-        self.inner.read(buf)
+        let n = self.inner.read(buf)?;
+        self.tally.at.fetch_add(n as u64, Ordering::Relaxed);
+        Ok(n)
     }
 }
 
 impl<T: Write> Write for Watched<'_, T> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.check()?;
-        self.inner.write(buf)
+        let n = self.inner.write(buf)?;
+        self.tally.at.fetch_add(n as u64, Ordering::Relaxed);
+        Ok(n)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -889,12 +1010,18 @@ impl Account {
         out
     }
 
+    /// The top of the server folder.
     pub fn remote(&self) -> WebDav {
-        WebDav::new(
-            &self.url,
-            self.username.as_deref(),
-            self.password.as_deref(),
-        )
+        self.remote_in("")
+    }
+
+    /// A space in it (see [`devices`]): empty for the top.
+    pub fn remote_in(&self, space: &str) -> WebDav {
+        let url = match space {
+            "" => self.url.clone(),
+            s => format!("{}/{s}", self.url.trim_end_matches('/')),
+        };
+        WebDav::new(&url, self.username.as_deref(), self.password.as_deref())
     }
 }
 

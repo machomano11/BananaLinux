@@ -12,6 +12,7 @@
 #include "../rnds/RndsUI.h"
 #include "input.h"
 #include "wifi.h"
+#include "cloud.h"
 #include <map>
 #include <memory>
 #include <mutex>
@@ -106,7 +107,7 @@ namespace banana
 		std::string about, wifiInfo, ip;
 
 		// the Wi-Fi pages: the networks around, and the keyboard for a password (settings-wifi.cpp)
-		enum Page { LIST, NETWORKS, KEYBOARD, UPDATES, SETUP, GAME } page = LIST;
+		enum Page { LIST, NETWORKS, KEYBOARD, UPDATES, SETUP, GAME, CLOUD_DEVICES } page = LIST;
 		// the game page (X on a DS game in the library): its emulator, this game only (banana/nds-per-game.conf, read by
 		// run-nds: "<ROM file name> = superdrastic|bananads", no line = Settings > Nintendo DS > Emulator)
 		// the game page (X on a DS game): its own emulator and shader, each "As in Settings" (index 0) or a choice
@@ -229,6 +230,15 @@ namespace banana
 		bool pollCloud(double nowMs);		// true when the line changed
 		void startCloud();
 		std::string cloudHelp() const;
+		// the devices page (Settings > Network > Cloud devices): the handhelds on the server, ticked when this one
+		// shares a space with them; A on one starts or stops sharing (banana-cloud share)
+		std::vector<cloud::Device> cdevs;
+		int csel = 0;
+		std::string cdevsFrom;				// the status line the list was read at (a run ending reads it again)
+		void openCloudDevices();
+		void loadCloudDevices();
+		Result pressCloudDevices(Key k);
+		void renderCloudDevices();
 		struct RaWatch;							// the achievements: RetroArch's log and the server (settings.cpp)
 		std::shared_ptr<RaWatch> raw;
 		std::string gTitle, gSystem;

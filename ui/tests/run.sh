@@ -119,8 +119,18 @@ for size in 640x480 1024x768; do
     run_cloud "shot cloud-done; press a; wait 600; shot cloud-started"
     for i in 1 2 3 4 5 6 7 8 9 10; do [ -e "$CR/cloud.ran" ] && break; sleep 0.2; done
     [ "$(cat "$CR/cloud.ran" 2>/dev/null)" = all ] || { echo "FAIL $size: Sync now didn't run banana-cloud all"; fail=1; }
+    # Cloud devices (the fifth row): the server's devices from the last run, this one first, the Brick sharing (the same
+    # space), the RG SP not; A on the RG SP runs banana-cloud share with its id
+    rm -f "$CR/cloud.ran"; echo "done 0 0 0 0" > "$CR/cloud.status"
+    printf 'rgds-1a2b\tAnbernic RG DS\t\t1792450000\nbrick-3c4d\tTrimUI Brick\t\t1792449000\nrgsp-5e6f\tAnbernic RG SP\tSpaces/rgsp-5e6f\t1792000000\n' > "$CR/cloud.devices"
+    run_cloud "press down; shot clouddev-row; press a; wait 600; press down; shot clouddev-brick; press down; shot clouddev-rgsp"
+    for i in 1 2 3 4 5 6 7 8 9 10; do [ -e "$CR/cloud.ran" ] && break; sleep 0.2; done
+    rm -f "$CR/cloud.ran"; echo "done 0 0 0 0" > "$CR/cloud.status"
+    run_cloud "press down; press a; wait 600; press down; press down; press a; wait 600; shot clouddev-share"
+    for i in 1 2 3 4 5 6 7 8 9 10; do grep -q share "$CR/cloud.ran" 2>/dev/null && break; sleep 0.2; done
+    [ "$(cat "$CR/cloud.ran" 2>/dev/null)" = "share rgsp-5e6f" ] || { echo "FAIL $size: A on the RG SP ran: $(cat "$CR/cloud.ran" 2>/dev/null)"; fail=1; }
     rm -f "$FX/data/cloudsync.ini"
-    for s in cloud-off cloud-how cloud-running cloud-done cloud-started; do
+    for s in cloud-off cloud-how cloud-running cloud-done cloud-started clouddev-row clouddev-brick clouddev-rgsp clouddev-share; do
         [ -s "$OUT/$size-$s-top.png" ] && [ -s "$OUT/$size-$s-bot.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }
     done
     grep 'bench:' "$log" | sed "s/^banana-ui: /$size /"

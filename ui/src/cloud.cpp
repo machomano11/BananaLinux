@@ -55,7 +55,7 @@ namespace banana
 
 		bool running() { return runningPid() != 0; }
 
-		void start(bool all)
+		static void run(const char* arg, const char* arg2)
 		{
 			if (running()) return;
 			const char* prog = getenv("BANANA_CLOUD");	// (another build of it, for testing)
@@ -68,12 +68,32 @@ namespace banana
 					setsid();
 					// its log with the menu's (stderr), at the lowest priority: the menu and the games first
 					if (nice(19) < 0) {}
-					execl(prog, prog, all ? "all" : nullptr, (char*)nullptr);
+					execl(prog, prog, arg, arg2, (char*)nullptr);
 					_exit(127);
 				}
 				_exit(0);
 			}
 			if (p > 0) waitpid(p, nullptr, 0);
+		}
+
+		void start(bool all) { run(all ? "all" : nullptr, nullptr); }
+		void share(const std::string& id) { run("share", id.c_str()); }
+
+		std::vector<Device> devices()
+		{
+			std::vector<Device> out;
+			std::ifstream f(runDir() + "/cloud.devices");
+			std::string ln;
+			while (std::getline(f, ln))
+			{
+				std::vector<std::string> c;
+				size_t a = 0, b;
+				while ((b = ln.find('\t', a)) != std::string::npos) { c.push_back(ln.substr(a, b - a)); a = b + 1; }
+				c.push_back(ln.substr(a));
+				if (c.size() < 4 || c[0].empty()) continue;
+				out.push_back({ c[0], c[1], c[2], atoll(c[3].c_str()) });
+			}
+			return out;
 		}
 
 		void stop()
