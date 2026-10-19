@@ -1,0 +1,14 @@
+[package]
+name = "slot-cloud"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Two-way sync of slot's saves and states with a WebDAV folder"
+
+[dependencies]
+libc = { workspace = true }
+slot-net = { path = "../slot-net" }
+
+[dev-dependencies]
+tempfile = { workspace = true }

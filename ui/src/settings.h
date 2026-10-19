@@ -219,7 +219,16 @@ namespace banana
 		bool pollScrape(double nowMs);		// true when the line changed
 		void startScrape();
 		std::string scrapeShort() const;	// for a row: "Not yet", "120 / 530", "410 of 530 found", "No connection"
-		void scrapeBar(float x, float y, float w);	// the progress bar and the game being fetched, while it runs
+		// the progress bar and the game being fetched, while it runs (or the file a cloud sync is at, from its line)
+		void scrapeBar(float x, float y, float w, const std::string& line = "");
+		// cloud sync (cloud.h): Sync now runs banana-cloud with the games, and the row follows its status line
+		std::string cloudLine;				// /run/banana/cloud.status, as last read
+		double cloudNext = 0;
+		bool cloudWatching = false;			// a Sync now from here is running: the library again if games came
+		bool cloudSyncing() const { return cloudLine.compare(0, 8, "running ") == 0; }
+		bool pollCloud(double nowMs);		// true when the line changed
+		void startCloud();
+		std::string cloudHelp() const;
 		struct RaWatch;							// the achievements: RetroArch's log and the server (settings.cpp)
 		std::shared_ptr<RaWatch> raw;
 		std::string gTitle, gSystem;

@@ -6,3 +6,4 @@
 /system/bananad/banana-panel-tune
 *.o
 /banana-*.bundle
+/system/banana-cloud/target/

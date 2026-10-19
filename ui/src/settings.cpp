@@ -1,5 +1,6 @@
 #include <ctime>
 #include "settings.h"
+#include "cloud.h"
 #include "theme.h"
 #include <algorithm>
 #include <dlfcn.h>
@@ -393,6 +394,7 @@ namespace banana
 		add(W, "phone", "Wi-Fi", "", menu, "wifi", { "On", "Off" }, { "on", "off" });
 		add(W, "phone", "Network", "The networks around: A on one joins it, with a password typed on the keyboard here (or by touch).", "", "network", {}, {}, Item::PAGE);
 		add(W, "phone", "File sharing", "", menu, "share", { "Off", "On" }, { "off", "on" });
+		add(W, "phone", "Cloud sync", "", "", "cloud", {}, {}, Item::PAGE);
 		const char* S = "System";
 		{
 			std::vector<std::string> names, tzs;
@@ -662,6 +664,7 @@ namespace banana
 		{
 			if (dir <= 0) return NONE;
 			if (it.key == "scrape") { startScrape(); return MOVED; }
+			if (it.key == "cloud") { startCloud(); return MOVED; }
 			if (it.key == "update") openUpdates(); else if (it.key == "setup") openSetup(); else openNetworks();
 			return MOVED;
 		}
@@ -1215,6 +1218,12 @@ namespace banana
 			wrapped("Fetching covers and title screens. The menu shows them as they come, and it carries on if you leave this screen.", 20, 50, 196, 540, 4, p.muted);
 			scrapeBar(50, 330, 540);
 		}
+		else if (cur.key == "cloud" && cloudSyncing())
+		{
+			wrapped("Syncing the saves, the save states and the games with your server. It carries on if you leave this screen, and the handheld stays awake until it is done.", 20, 50, 196, 540, 4, p.muted);
+			scrapeBar(50, 330, 540, cloudLine);
+		}
+		else if (cur.key == "cloud") wrapped(message.empty() ? cloudHelp() : message, 20, 50, 196, 540, 7, p.muted);
 		else wrapped(help, 20, 50, 196, 540, 7, p.muted);
 		be->endScreen();
 
@@ -1248,6 +1257,7 @@ namespace banana
 			else if (it.kind == Item::PAGE && it.key == "network") v = wstat.connected ? fit(wstat.ssid, true, 19, 300) : (wifiOn() ? "Choose" : "");
 			else if (it.kind == Item::PAGE && it.key == "update") v = updatesWaiting();
 			else if (it.kind == Item::PAGE && it.key == "scrape") v = scrapeShort();
+			else if (it.kind == Item::PAGE && it.key == "cloud") v = cloud::summary(cloudLine, cloud::configured(data));
 			if (v.empty()) continue;
 			float vw = text(v, true, 19, 0, 0, p.ink, false, 0, true);
 			Color vc = on ? (armed == i ? p.onPickAccent : p.onPick) : p.muted;
@@ -1259,7 +1269,7 @@ namespace banana
 		be->popClip();
 		float bw = faceWidth("B", "Back");
 		face("B", "Back", 18, bw);
-		std::string act = cur.kind == Item::ACTION ? (armed == sel ? "Confirm" : cur.label) : cur.kind == Item::INFO ? "" : cur.key == "scrape" ? (scraping() ? "" : "Start") : cur.kind == Item::PAGE ? "Open" : "Change";
+		std::string act = cur.kind == Item::ACTION ? (armed == sel ? "Confirm" : cur.label) : cur.kind == Item::INFO ? "" : cur.key == "scrape" ? (scraping() ? "" : "Start") : cur.key == "cloud" ? (cloudSyncing() ? "" : "Sync now") : cur.kind == Item::PAGE ? "Open" : "Change";
 		if (!act.empty())
 		{
 			float aw = faceWidth("A", act);
@@ -1321,6 +1331,7 @@ namespace banana
 		now = t;
 		if (!mOpen) return false;
 		bool scrapeChanged = pollScrape(t);
+		scrapeChanged |= pollCloud(t);
 		if (raCheck)
 		{
 			std::lock_guard<std::mutex> l(raCheck->mu);
@@ -1386,6 +1397,7 @@ namespace banana
 		int mine = raCheck ? 200 : toastUntil > t ? std::max(0, (int)(toastUntil - t) + 1) : -1;
 		if (mine >= 0 && (w < 0 || mine < w)) w = mine;
 		if (scraping() && (w < 0 || w > 500)) w = std::max(0, (int)(scrapeNext - t));	// the box art's progress
+		if (cloudSyncing() && (w < 0 || w > 500)) w = std::max(0, (int)(cloudNext - t));	// the sync's
 		return w;
 	}
 
@@ -2445,10 +2457,10 @@ namespace banana
 		return "Not yet";
 	}
 
-	void Settings::scrapeBar(float x, float y, float w)
+	void Settings::scrapeBar(float x, float y, float w, const std::string& line)
 	{
 		SPal p = pal(light);
-		std::istringstream in(scrapeLine);
+		std::istringstream in(line.empty() ? scrapeLine : line);
 		std::string state, rest;
 		int a = 0, b = 0;
 		in >> state >> a >> b;
@@ -2459,6 +2471,51 @@ namespace banana
 		if (b > 0) be->fill(X(x + 2), X(y + 2), X((w - 4) * a / b), X(10), p.accent);
 		text(fit(sys.empty() ? "Starting" : sys, true, 17, w), true, 17, x, y + 26, p.ink);
 		text(fit(game, false, 16, w), false, 16, x, y + 52, p.muted);
+	}
+
+	// ---- cloud sync: banana-cloud ------------------------------------------------------------------------------
+	bool Settings::pollCloud(double t)
+	{
+		if (t < cloudNext) return false;
+		cloudNext = t + 500;
+		std::string ln = cloud::status();
+		// a run that is gone (crashed or killed) without its last word
+		if (ln.compare(0, 8, "running ") == 0 && !cloud::running()) ln = "error stopped";
+		if (ln == cloudLine) return false;
+		bool was = cloudSyncing();
+		cloudLine = ln;
+		if (was && !cloudSyncing() && cloudWatching)
+		{
+			cloudWatching = false;
+			std::istringstream in(ln);
+			std::string state;
+			int sent = 0, got = 0;
+			in >> state >> sent >> got;
+			if (state == "done" && got > 0) libChanged = true;	// games may have come: the library again
+		}
+		return true;
+	}
+
+	void Settings::startCloud()
+	{
+		message.clear();
+		if (cloudSyncing()) return;
+		if (!cloud::configured(data)) { message = cloudHelp(); return; }
+		if (!wifiOn()) { message = "Wi-Fi is off: switch it on in Network first."; return; }
+		cloud::start(true);
+		cloudLine = "running 0 0 Starting|";
+		cloudWatching = true;
+		cloudNext = now + 500;
+	}
+
+	std::string Settings::cloudHelp() const
+	{
+		if (!cloud::configured(data))
+			return "Keeps your saves, save states and games on your own WebDAV server, shared with Slot on the TrimUI Brick and "
+				"the RG SP. To set it up, copy Slot's cloudsync.ini (url, username and password) into the banana folder on the card.";
+		return "Your saves and save states sync on their own: when the menu starts, after each game and every 10 minutes. "
+			"Sync now does the games too (roms=0 in banana/cloudsync.ini leaves them out). A file changed on two handhelds "
+			"keeps the newer copy, and the older one stays beside it as a .conflict file.";
 	}
 
 	// ---- the game panel -----------------------------------------------------------------------------------------

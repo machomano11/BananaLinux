@@ -100,6 +100,29 @@ for size in 640x480 1024x768; do
     for s in pergame pergame-shader pergame-none; do
         [ -s "$OUT/$size-$s-top.png" ] && [ -s "$OUT/$size-$s-bot.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }
     done
+    # Cloud sync (Settings > Network, the fourth row): not set up (A says how), then with banana/cloudsync.ini a sync
+    # running (its line in the status file, its pid alive) and one done, and A starting banana-cloud with the games
+    clog=$OUT/$size-cloud.log; CR=$OUT/run; rm -rf "$CR"; mkdir -p "$CR"
+    run_cloud() { BANANA_RUN="$CR" BANANA_CLOUD="$HERE/tests/fake-cloud.sh" BANANA_WIFI="$HERE/tests/fake-wifi.sh" FAKE_WIFI_CONF="$FX/data/wifi.conf" \
+        "$HERE/banana-ui" --headless "$OUT/$size-" --size $size --assets "$HERE/assets/rnds" \
+        --systems "$HERE/../system/rootfs/etc/banana/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 0; press start; press r; press r; press r; press r; press a; press down; press down; press down; $1" 2>> "$clog" ||
+        { echo "FAIL $size: banana-ui (cloud sync) exited $?"; fail=1; }; }
+    rm -f "$FX/data/cloudsync.ini"
+    run_cloud "shot cloud-off; press a; shot cloud-how"
+    [ -e "$CR/cloud.ran" ] && { echo "FAIL $size: Sync now ran with no account"; fail=1; }
+    printf 'url=https://dav.example/slot\nusername=me\n' > "$FX/data/cloudsync.ini"
+    sleep 30 & busy=$!
+    echo $busy > "$CR/cloud.lock"; echo "running 37 120 Games|Games/GBA/Orchard Tactics.gba" > "$CR/cloud.status"
+    run_cloud "shot cloud-running"
+    kill $busy; : > "$CR/cloud.lock"; echo "done 2 1 0 0" > "$CR/cloud.status"
+    run_cloud "shot cloud-done; press a; wait 600; shot cloud-started"
+    for i in 1 2 3 4 5 6 7 8 9 10; do [ -e "$CR/cloud.ran" ] && break; sleep 0.2; done
+    [ "$(cat "$CR/cloud.ran" 2>/dev/null)" = all ] || { echo "FAIL $size: Sync now didn't run banana-cloud all"; fail=1; }
+    rm -f "$FX/data/cloudsync.ini"
+    for s in cloud-off cloud-how cloud-running cloud-done cloud-started; do
+        [ -s "$OUT/$size-$s-top.png" ] && [ -s "$OUT/$size-$s-bot.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }
+    done
     grep 'bench:' "$log" | sed "s/^banana-ui: /$size /"
 done
 [ $fail = 0 ] && echo "banana-ui: all checks passed ($OUT)"

@@ -1,0 +1,8 @@
+config BR2_PACKAGE_BANANA_CLOUD
+	bool "banana-cloud"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  Cloud sync: the card's saves, states and games with a WebDAV
+	  folder, with Slot's sync code, so the RG DS shares one folder
+	  with Slot on the TrimUI Brick and the RG SP.
