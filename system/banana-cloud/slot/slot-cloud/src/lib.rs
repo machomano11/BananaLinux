@@ -11,8 +11,8 @@
 //! - gone on one side and unchanged on the other: deleted there too, except
 //!   under `Saves`, `Games` and `Labels`, where nothing is ever deleted and
 //!   the missing copy comes back instead;
-//! - a game found on both sides with no history and the same size is taken
-//!   to be the same game, rather than fetched just to compare;
+//! - a game or its art found on both sides with no history is taken to be
+//!   the same, and left as it is on each side rather than fetched to compare;
 //! - files written in the last few seconds wait for the next run;
 //! - files of the game being played ("held") are only ever uploaded: nothing
 //!   overwrites or deletes them under a running game.
@@ -676,6 +676,10 @@ impl Run<'_> {
     }
 }
 
+fn in_folder(rel: &str, folder: &str) -> bool {
+    rel.strip_prefix(folder).is_some_and(|r| r.starts_with('/'))
+}
+
 /// What one file needs to be in line on both sides.
 enum Step<'r> {
     /// Nothing to copy; what to remember of it, if anything.
@@ -704,7 +708,10 @@ fn plan<'r>(rel: &str, l: Option<Local>, r: Option<&'r Listed>, s: Option<&Seen>
             (false, true) => Step::Download(r),
             (true, true) => Step::Both(l, r),
         },
-        (Some(l), Some(r), None) if rel.starts_with("Games/") && l.size == r.size => {
+        // A game or its art found on both sides is taken to be the same,
+        // rather than fetched to compare: devices get their art separately,
+        // and the same game can be dumped more than one way.
+        (Some(l), Some(r), None) if [GAMES, ART].iter().any(|f| in_folder(rel, f)) => {
             Step::Keep(Some(Seen {
                 local: l.mtime_ns,
                 size: l.size,
@@ -1019,18 +1026,12 @@ impl Account {
         out
     }
 
-    /// The top of the server folder.
     pub fn remote(&self) -> WebDav {
-        self.remote_in("")
-    }
-
-    /// A space in it (see [`devices`]): empty for the top.
-    pub fn remote_in(&self, space: &str) -> WebDav {
-        let url = match space {
-            "" => self.url.clone(),
-            s => format!("{}/{s}", self.url.trim_end_matches('/')),
-        };
-        WebDav::new(&url, self.username.as_deref(), self.password.as_deref())
+        WebDav::new(
+            &self.url,
+            self.username.as_deref(),
+            self.password.as_deref(),
+        )
     }
 }
 

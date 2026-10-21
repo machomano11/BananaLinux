@@ -11,8 +11,9 @@
 //!
 //! This handheld, as on Slot (slot-cloud's devices.rs), is in banana/cloudsync-device.ini: `id=` (made up the first
 //! time) and `systems=`, the systems it syncs as the server names them (`GBA,GB,NDS`; Settings > Network > Cloud
-//! systems); without it, every system it has, and empty, none. A system left out is left alone, on the card and on the server. Every
-//! run checks in at `Devices/<id>.ini` on the server. What the last run saw: banana/cloudsync.manifest.
+//! systems); without it, every system it has, and empty, none. A system left out is left alone, on the card and on
+//! the server. Every run checks in at `Devices/<id>.ini` on the server with its name and those systems. What the last
+//! run saw: banana/cloudsync.manifest.
 //!
 //! How it went is one line in /run/banana/cloud.status: "running <done> <total> <what>|<file>" while it runs, then
 //! "done <sent> <received> <conflicts> <skipped>", "offline <why>", "error <why>" or "off" (no account). SIGTERM
@@ -145,10 +146,14 @@ fn this_device(data: &Path) -> (Device, Option<Vec<String>>) {
             .cloned()
             .unwrap_or_default(),
         name: model(),
-        space: String::new(),
+        systems: Vec::new(),
         seen: 0,
     };
     let picked = saved.get("systems").map(|s| systems_of(s));
+    // on the server, as Slot's devices say it: the systems it syncs
+    me.systems = picked
+        .clone()
+        .unwrap_or_else(|| layout::SYSTEMS.iter().map(|(_, p)| p.to_string()).collect());
     if me.id.is_empty() {
         me.id = format!("rgds-{:04x}", random16());
         save_device(data, &me.id, picked.as_deref());
@@ -158,10 +163,7 @@ fn this_device(data: &Path) -> (Device, Option<Vec<String>>) {
 
 /// `GBA, gb,NDS` as the server's names: GBA, GB, NDS.
 fn systems_of(list: &str) -> Vec<String> {
-    list.split([',', ' '])
-        .map(|s| s.trim().to_ascii_uppercase())
-        .filter(|s| !s.is_empty())
-        .collect()
+    devices::systems(&list.to_ascii_uppercase())
 }
 
 const DEVICE_FILE: &str = "banana/cloudsync-device.ini";

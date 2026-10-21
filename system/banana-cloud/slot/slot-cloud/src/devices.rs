@@ -1,26 +1,22 @@
-//! Which devices share a space on the server.
+//! The devices that sync with the server, and which systems each one syncs.
 //!
 //! Every device checks in at `Devices/<id>.ini` at the top of the server
-//! folder, saying its name and the space it syncs with:
+//! folder, saying its name, the systems it syncs, and when it last did:
 //!
 //! ```text
 //! name=TrimUI Brick
-//! space=
+//! systems=GBA,GB,GBC
 //! seen=1792450000
 //! ```
 //!
-//! An empty `space` is the top of the folder itself, where every device
-//! starts and where `Saves`, `States`, `Games` and `Labels` lived before
-//! devices could be picked. Any other space is `Spaces/<name>`, and has the
-//! same four folders. Devices in the same space share everything in it;
-//! a device that stops sharing moves to a space of its own and takes its
-//! files with it on its next run. Nothing is ever deleted from a space left
-//! behind.
+//! Systems are the platform folder names under `Saves`, `States`, `Games`
+//! and `Labels`. A device syncs those four folders only for its systems,
+//! and leaves everything else on the server alone. Every device shares the
+//! one server folder.
 
 use crate::{Error, Remote};
 
 pub const DIR: &str = "Devices";
-pub const SPACES: &str = "Spaces";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Device {
@@ -28,8 +24,8 @@ pub struct Device {
     pub id: String,
     /// What the device is, for people.
     pub name: String,
-    /// Where on the server it syncs: empty, or `Spaces/<name>`.
-    pub space: String,
+    /// The systems it syncs.
+    pub systems: Vec<String>,
     /// When it last checked in, in seconds since 1970.
     pub seen: u64,
 }
@@ -37,9 +33,9 @@ pub struct Device {
 impl Device {
     pub fn to_ini(&self) -> String {
         format!(
-            "name={}\nspace={}\nseen={}\n",
+            "name={}\nsystems={}\nseen={}\n",
             self.name.replace('\n', " "),
-            self.space,
+            self.systems.join(","),
             self.seen
         )
     }
@@ -56,7 +52,7 @@ impl Device {
             let v = v.trim();
             match k.trim() {
                 "name" => d.name = v.to_string(),
-                "space" => d.space = clean_space(v),
+                "systems" => d.systems = systems(v),
                 "seen" => d.seen = v.parse().unwrap_or(0),
                 _ => {}
             }
@@ -66,27 +62,16 @@ impl Device {
         }
         d
     }
-
-    /// A space of this device's own, other than `not`.
-    pub fn own_space(&self, not: &str) -> String {
-        let first = format!("{SPACES}/{}", self.id);
-        match first == not {
-            true => format!("{first}-{}", self.seen),
-            false => first,
-        }
-    }
 }
 
-/// A space as written by anyone: `Spaces/<name>` with a safe name, or the top.
-pub fn clean_space(s: &str) -> String {
-    match s
-        .trim()
-        .trim_matches('/')
-        .strip_prefix(&format!("{SPACES}/"))
-    {
-        Some(name) if id_ok(name) => format!("{SPACES}/{name}"),
-        _ => String::new(),
-    }
+/// A `systems=` value: names separated by commas, each a safe folder name.
+pub fn systems(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|s| id_ok(s))
+        .map(str::to_string)
+        .collect()
 }
 
 pub fn id_ok(id: &str) -> bool {
@@ -98,7 +83,7 @@ pub fn id_ok(id: &str) -> bool {
 }
 
 /// Writes `me` to the server's list of devices and reads the whole list,
-/// `me` included. `remote` is the top of the server folder.
+/// `me` first.
 pub fn check_in(remote: &mut dyn Remote, me: &Device) -> Result<Vec<Device>, Error> {
     if remote.list("")?.is_none() {
         remote.mkdir("")?;
@@ -106,12 +91,6 @@ pub fn check_in(remote: &mut dyn Remote, me: &Device) -> Result<Vec<Device>, Err
     let mut entries = remote.list(DIR)?;
     if entries.is_none() {
         remote.mkdir(DIR)?;
-    }
-    if !me.space.is_empty() && remote.list(&me.space)?.is_none() {
-        if remote.list(SPACES)?.is_none() {
-            remote.mkdir(SPACES)?;
-        }
-        remote.mkdir(&me.space)?;
     }
     let body = me.to_ini();
     remote.put(
