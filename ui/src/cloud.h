@@ -16,7 +16,7 @@ namespace banana
 		void start(bool all);
 		// the systems that can sync (system/banana-cloud/src/layout.rs's SYSTEMS, by their names on the server, as
 		// Slot names them) and whether this handheld syncs them: systems= in banana/cloudsync-device.ini, every one
-		// without it. One left out is left alone, on the card and on the server.
+		// without it, none when it is empty. One left out is left alone, on the card and on the server.
 		struct System { std::string id, name; bool picked = true; };
 		std::vector<System> systems(const std::string& dataDir);
 		// writes the choice back (no systems= when all are picked, so a system added later syncs too)

@@ -11,7 +11,7 @@
 //!
 //! This handheld, as on Slot (slot-cloud's devices.rs), is in banana/cloudsync-device.ini: `id=` (made up the first
 //! time) and `systems=`, the systems it syncs as the server names them (`GBA,GB,NDS`; Settings > Network > Cloud
-//! systems); without it, every system it has. A system left out is left alone, on the card and on the server. Every
+//! systems); without it, every system it has, and empty, none. A system left out is left alone, on the card and on the server. Every
 //! run checks in at `Devices/<id>.ini` on the server. What the last run saw: banana/cloudsync.manifest.
 //!
 //! How it went is one line in /run/banana/cloud.status: "running <done> <total> <what>|<file>" while it runs, then
@@ -135,7 +135,7 @@ fn failed(status: &Status, e: &slot_cloud::Error) {
 }
 
 /// This handheld as banana/cloudsync-device.ini has it, given an id the first time ("rgds-" and four hex digits),
-/// and the systems picked to sync (`None`: all of them).
+/// and the systems picked to sync (`None`: all of them; an empty `systems=`, none).
 fn this_device(data: &Path) -> (Device, Option<Vec<String>>) {
     let saved = read_ini(&data.join(DEVICE_FILE));
     let mut me = Device {
@@ -153,7 +153,7 @@ fn this_device(data: &Path) -> (Device, Option<Vec<String>>) {
         me.id = format!("rgds-{:04x}", random16());
         save_device(data, &me.id, picked.as_deref());
     }
-    (me, picked.filter(|p| !p.is_empty()))
+    (me, picked)
 }
 
 /// `GBA, gb,NDS` as the server's names: GBA, GB, NDS.

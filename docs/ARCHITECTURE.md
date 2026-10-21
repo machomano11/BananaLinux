@@ -119,7 +119,7 @@ there), stops it with SIGTERM when a game starts (it stops between files: nothin
 now runs it with the games, following `/run/banana/cloud.status`; that run keeps bananad from sleeping for idleness
 (`awake.pid`), and games that came down are read into the library. Each handheld picks the systems it syncs:
 `systems=GBA,GB,...` (the server's names) in `banana/cloudsync-device.ini`, beside the `id=` it checks in with at
-`Devices/<id>.ini` on the server, as on Slot; without it, every system. Settings > Network > Cloud systems ticks them.
+`Devices/<id>.ini` on the server, as on Slot; without it, every system, and empty, none. Settings > Network > Cloud systems ticks them.
 A system left out is left alone on the card and on the server (the layout keeps none of its files), so nothing is
 deleted anywhere when one is unticked.
 

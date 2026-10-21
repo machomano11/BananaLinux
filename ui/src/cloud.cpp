@@ -112,7 +112,6 @@ namespace banana
 				if (ch == ',' || ch == ' ' || ch == '\t' || ch == '\r') { if (!cur.empty()) picked.push_back(cur); cur.clear(); }
 				else cur += ch;
 			}
-			if (picked.empty()) has = false;	// (as banana-cloud reads it: an empty list is every system)
 			std::vector<System> out;
 			for (auto& s : SYSTEMS)
 			{
@@ -132,7 +131,6 @@ namespace banana
 				every &= s.picked;
 				if (s.picked) list += (list.empty() ? "" : ",") + s.id;
 			}
-			if (list.empty()) list = "none";
 			// the other lines (the id banana-cloud made up) stay as they are
 			std::string out;
 			std::ifstream f(deviceFile(dataDir));
