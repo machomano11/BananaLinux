@@ -696,7 +696,7 @@ impl Step<'_> {
 
 fn plan<'r>(rel: &str, l: Option<Local>, r: Option<&'r Listed>, s: Option<&Seen>) -> Step<'r> {
     let keep = KEEP.iter().any(|k| rel.starts_with(&format!("{k}/")));
-    let local_changed = |l: Local, s: &Seen| l.mtime_ns != s.local || l.size != s.size;
+    let local_changed = |l: Local, s: &Seen| changed_since(l, s);
     match (l, r, s) {
         (Some(l), Some(r), Some(s)) => match (local_changed(l, s), r.tag != s.tag) {
             (false, false) => Step::Keep(Some(s.clone())),
@@ -720,14 +720,23 @@ fn plan<'r>(rel: &str, l: Option<Local>, r: Option<&'r Listed>, s: Option<&Seen>
     }
 }
 
+/// Whether the card's file is no longer the one last synced. Dates count in
+/// two-second steps: FAT keeps no finer, exFAT 10 ms, so a file written here
+/// reads back a little earlier once the card is mounted again, and that alone
+/// must not send it (or a game every other handheld then fetches again).
+fn changed_since(l: Local, s: &Seen) -> bool {
+    const STEP: u64 = 2_000_000_000;
+    l.size != s.size || l.mtime_ns / STEP != s.local / STEP
+}
+
 /// Whether a held file is one that may simply be sent: it changed here, and
 /// the server's copy is the one last seen (or there is none and never was).
 fn only_sent(rel: &str, l: Local, r: Option<&Listed>, s: Option<&Seen>) -> bool {
     let keep = KEEP.iter().any(|k| rel.starts_with(&format!("{k}/")));
     match (r, s) {
         (None, None) => true,
-        (None, Some(s)) => keep || l.mtime_ns != s.local || l.size != s.size,
-        (Some(r), Some(s)) => r.tag == s.tag && (l.mtime_ns != s.local || l.size != s.size),
+        (None, Some(s)) => keep || changed_since(l, s),
+        (Some(r), Some(s)) => r.tag == s.tag && changed_since(l, s),
         (Some(_), None) => false,
     }
 }
@@ -1076,5 +1085,38 @@ mod tests {
         let back = read_manifest(&path);
         assert_eq!(back["Saves/GBA/a b.sav"].tag, "\"x y\"");
         assert_eq!(back["Saves/GBA/a b.sav"].local, 12);
+    }
+
+    #[test]
+    fn a_date_the_card_rounds_down_is_not_a_change() {
+        let seen = Seen {
+            local: 1_792_478_786_987_654_321,
+            size: 8,
+            tag: "\"t\"".into(),
+        };
+        let read = |ns, size| Local { mtime_ns: ns, size };
+        // what exFAT (10 ms) and FAT (2 s) give back after a remount
+        assert!(!changed_since(read(1_792_478_786_980_000_000, 8), &seen));
+        assert!(!changed_since(read(1_792_478_786_000_000_000, 8), &seen));
+        // a real write, or a new size
+        assert!(changed_since(read(1_792_478_790_000_000_000, 8), &seen));
+        assert!(changed_since(read(1_792_478_786_987_654_321, 9), &seen));
+        let r = Listed {
+            name: "g".into(),
+            is_dir: false,
+            size: 8,
+            tag: "\"t\"".into(),
+            modified: None,
+        };
+        let rel = "Games/GBA/g.gba";
+        assert!(matches!(
+            plan(
+                rel,
+                Some(read(1_792_478_786_000_000_000, 8)),
+                Some(&r),
+                Some(&seen)
+            ),
+            Step::Keep(_)
+        ));
     }
 }

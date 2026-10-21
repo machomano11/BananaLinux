@@ -395,7 +395,7 @@ namespace banana
 		add(W, "phone", "Network", "The networks around: A on one joins it, with a password typed on the keyboard here (or by touch).", "", "network", {}, {}, Item::PAGE);
 		add(W, "phone", "File sharing", "", menu, "share", { "Off", "On" }, { "off", "on" });
 		add(W, "phone", "Cloud sync", "", "", "cloud", {}, {}, Item::PAGE);
-		add(W, "phone", "Cloud devices", "Which of your handhelds share saves, save states and games with this one. Devices that share are in one space on the server; the others keep their own.", "", "clouddev", {}, {}, Item::PAGE);
+		add(W, "phone", "Cloud systems", "Which systems this handheld syncs: their saves, save states and games. A system left out is left alone, here and on the server.", "", "cloudsys", {}, {}, Item::PAGE);
 		const char* S = "System";
 		{
 			std::vector<std::string> names, tzs;
@@ -666,7 +666,7 @@ namespace banana
 			if (dir <= 0) return NONE;
 			if (it.key == "scrape") { startScrape(); return MOVED; }
 			if (it.key == "cloud") { startCloud(); return MOVED; }
-			if (it.key == "clouddev") { openCloudDevices(); return MOVED; }
+			if (it.key == "cloudsys") { openCloudSystems(); return MOVED; }
 			if (it.key == "update") openUpdates(); else if (it.key == "setup") openSetup(); else openNetworks();
 			return MOVED;
 		}
@@ -719,7 +719,7 @@ namespace banana
 		if (page == KEYBOARD) return pressKeyboard(k);
 		if (page == GAME) return pressGame(k);
 		if (page == UPDATES) return pressUpdates(k);
-		if (page == CLOUD_DEVICES) return pressCloudDevices(k);
+		if (page == CLOUD_SYSTEMS) return pressCloudSystems(k);
 		if (page == SETUP) return pressSetup(k);
 		if (inGroups) return pressGroups(k);
 		int g = groupOf(sel), b = groupStart(g), e = groupEnd(g);
@@ -798,15 +798,16 @@ namespace banana
 			}
 			return NONE;
 		}
-		if (page == CLOUD_DEVICES)
+		if (page == CLOUD_SYSTEMS)
 		{
-			if (downY >= 418 && downY <= 466) return pressCloudDevices(downX < 320 ? Key::B : Key::A);
-			for (int r = 0; r < ROWS && r < (int)cdevs.size(); r++)
+			if (downY >= 418 && downY <= 466) return pressCloudSystems(downX < 320 ? Key::B : Key::A);
+			int top = std::max(0, std::min(csel - ROWS + 1, (int)csys.size() - ROWS));
+			for (int r = 0; r < ROWS && top + r < (int)csys.size(); r++)
 			{
 				float ry = 82 + r * 64;
 				if (downY < ry || downY > ry + 56) continue;
-				if (r != csel) { csel = r; return MOVED; }
-				return pressCloudDevices(Key::A);
+				if (top + r != csel) { csel = top + r; return MOVED; }
+				return pressCloudSystems(Key::A);
 			}
 			return NONE;
 		}
@@ -1198,7 +1199,7 @@ namespace banana
 		if (page == KEYBOARD) { renderKeyboard(); return; }
 		if (page == GAME) { renderGame(); return; }
 		if (page == UPDATES) { renderUpdates(); return; }
-		if (page == CLOUD_DEVICES) { renderCloudDevices(); return; }
+		if (page == CLOUD_SYSTEMS) { renderCloudSystems(); return; }
 		if (page == SETUP) { renderSetup(); return; }
 		if (inGroups) { renderGroups(); return; }
 		SPal p = pal(light);
@@ -1274,12 +1275,12 @@ namespace banana
 			else if (it.kind == Item::PAGE && it.key == "update") v = updatesWaiting();
 			else if (it.kind == Item::PAGE && it.key == "scrape") v = scrapeShort();
 			else if (it.kind == Item::PAGE && it.key == "cloud") v = cloud::summary(cloudLine, cloud::configured(data));
-			else if (it.kind == Item::PAGE && it.key == "clouddev" && cloud::configured(data))
+			else if (it.kind == Item::PAGE && it.key == "cloudsys" && cloud::configured(data))
 			{
-				auto d = cloud::devices();
+				auto s = cloud::systems(data);
 				int n = 0;
-				for (size_t i = 1; i < d.size(); i++) n += d[i].space == d[0].space;
-				v = d.empty() ? "Open" : n ? "Sharing with " + std::to_string(n) : "Not sharing";
+				for (auto& x : s) n += x.picked;
+				v = n == (int)s.size() ? "All" : n ? std::to_string(n) + " of " + std::to_string(s.size()) : "None";
 			}
 			if (v.empty()) continue;
 			float vw = text(v, true, 19, 0, 0, p.ink, false, 0, true);
@@ -1374,7 +1375,6 @@ namespace banana
 			if (joining.empty() && now >= nextScan) startScan();
 		}
 		bool changed = scrapeChanged;
-		if (page == CLOUD_DEVICES && cdevsFrom != cloudLine && !cloudSyncing()) { loadCloudDevices(); changed = true; }
 		if (page == UPDATES && applying && now >= nextStatus2)
 		{
 			std::string before = ustatus;
@@ -2542,28 +2542,19 @@ namespace banana
 			"keeps the newer copy, and the older one stays beside it as a .conflict file.";
 	}
 
-	// ---- cloud devices: which handhelds share a space on the server ---------------------------------------------
-	void Settings::openCloudDevices()
+	// ---- cloud systems: which systems this handheld syncs ---------------------------------------------------------
+	void Settings::openCloudSystems()
 	{
 		message.clear();
 		if (!cloud::configured(data)) { message = cloudHelp(); return; }
-		page = CLOUD_DEVICES;
+		page = CLOUD_SYSTEMS;
 		csel = 0;
-		loadCloudDevices();
-		// a quick run (the saves and states) says who is on the server now
-		if (!cloudSyncing() && wifiOn()) { cloud::start(false); cloudLine = "running 0 0 Comparing|"; cloudNext = now + 500; }
+		csys = cloud::systems(data);
 	}
 
-	void Settings::loadCloudDevices()
+	Settings::Result Settings::pressCloudSystems(Key k)
 	{
-		cdevs = cloud::devices();
-		cdevsFrom = cloudLine;
-		if (csel >= (int)cdevs.size()) csel = std::max(0, (int)cdevs.size() - 1);
-	}
-
-	Settings::Result Settings::pressCloudDevices(Key k)
-	{
-		int n = (int)cdevs.size();
+		int n = (int)csys.size();
 		switch (k)
 		{
 		case Key::UP: case Key::DOWN:
@@ -2572,15 +2563,14 @@ namespace banana
 			message.clear();
 			return MOVED;
 		case Key::A: case Key::RIGHT:
-			if (!n || csel == 0) return NONE;	// (this handheld)
-			if (cloudSyncing()) { message = "A sync is running: this changes once it is done. Try again in a moment."; return MOVED; }
-			if (!wifiOn()) { message = "Wi-Fi is off: switch it on in Network first."; return MOVED; }
-			message = (cdevs[csel].space == cdevs[0].space ? "Stopping sharing with " : "Sharing with ") + cdevs[csel].name +
-				": this handheld's saves and states go to the new space now; Sync now brings its games too.";
-			cloud::share(cdevs[csel].id);
-			cloudLine = "running 0 0 Moving|";
-			cloudNext = now + 500;
+		{
+			if (!n) return NONE;
+			auto& s = csys[csel];
+			s.picked = !s.picked;
+			if (!cloud::setSystems(data, csys)) { s.picked = !s.picked; message = "Couldn't save that on the card."; return MOVED; }
+			message = s.picked ? s.name + " syncs from the next sync on." : s.name + " is left alone from now on, here and on the server (nothing is deleted).";
 			return MOVED;
+		}
 		case Key::B: case Key::LEFT:
 			page = LIST; message.clear();
 			return MOVED;
@@ -2590,63 +2580,48 @@ namespace banana
 		}
 	}
 
-	void Settings::renderCloudDevices()
+	void Settings::renderCloudSystems()
 	{
 		SPal p = pal(light);
+		int picked = 0;
+		for (auto& s : csys) picked += s.picked;
 		be->beginScreen(0);
 		box("screen", false, 0, 0, 640, 480);
 		box("hero", false, 18, 20, 604, 436);
 		icon("phone", 50, 56, 3);
 		text("Network", true, 17, 170, 62, p.muted, true, 1.4f);
-		text("Cloud devices", true, 30, 170, 88, p.ink);
-		int sharing = 0;
-		for (size_t i = 1; i < cdevs.size(); i++) sharing += cdevs[i].space == cdevs[0].space;
-		std::string st = cloudSyncing() ? "Syncing" : cdevs.empty() ? cloud::summary(cloudLine, true) : sharing ? "Sharing with " + std::to_string(sharing) : "Not sharing";
+		text("Cloud systems", true, 30, 170, 88, p.ink);
+		std::string st = picked == (int)csys.size() ? "Syncing every system" : picked ? "Syncing " + std::to_string(picked) + " of " + std::to_string(csys.size()) : "Syncing nothing";
 		text(fit(st, true, 22, 420), true, 22, 170, 130, p.accent);
-		std::string help;
-		if (!message.empty()) help = message;
-		else if (cdevs.empty()) help = cloudSyncing() ? "Asking the server which handhelds sync with it..." : "No devices yet: the list comes from the server once a sync has reached it.";
-		else if (csel == 0) help = "This handheld, " + cdevs[0].name + ". Every handheld that syncs checks in on the server; the ticked ones share saves, save states and games with this one. A on another one starts or stops sharing with it.";
-		else
-		{
-			const auto& d = cdevs[csel];
-			long long ago = d.seen > 0 ? (long long)time(nullptr) - d.seen : -1;
-			std::string when = ago < 0 ? "never" : ago < 120 ? "just now" : ago < 7200 ? std::to_string(ago / 60) + " minutes ago" : ago < 172800 ? std::to_string(ago / 3600) + " hours ago" : std::to_string(ago / 86400) + " days ago";
-			help = d.name + " (" + d.id + "), last synced " + when + ". " + (d.space == cdevs[0].space
-				? "It shares with this handheld. A stops sharing: this one moves to a space of its own and takes its files with it."
-				: "It keeps its own files. A shares with it: this handheld joins its space, and what each has goes to the other (a file on both keeps the newer copy).");
-		}
-		if (cloudSyncing()) { wrapped(help, 20, 50, 196, 540, 4, p.muted); scrapeBar(50, 330, 540, cloudLine); }
-		else wrapped(help, 20, 50, 196, 540, 7, p.muted);
+		std::string help = !message.empty() ? message
+			: "The ticked systems sync on this handheld: their saves, save states and, with Sync now, their games. Each "
+			  "handheld has its own list (on Slot: HOME > Cloud Sync). A on a system ticks or unticks it.";
+		wrapped(help, 20, 50, 196, 540, 7, p.muted);
 		be->endScreen();
 
 		be->beginScreen(1);
 		box("screen", false, 0, 0, 640, 480);
 		box("bubble", false, 18, 14, 604, 54);
-		text("Your handhelds", true, 22, 38, 28, p.ink);
-		std::string count = std::to_string(cdevs.size()) + (cdevs.size() == 1 ? " device" : " devices");
-		float cw = text(count, true, 17, 0, 0, p.muted, false, 0, true);
-		text(count, true, 17, 602 - cw, 31, p.muted);
-		int top = std::max(0, std::min(csel - ROWS + 1, (int)cdevs.size() - ROWS));
-		for (int r = 0; r < ROWS && top + r < (int)cdevs.size(); r++)
+		text("Systems to sync", true, 22, 38, 28, p.ink);
+		int top = std::max(0, std::min(csel - ROWS + 1, (int)csys.size() - ROWS));
+		for (int r = 0; r < ROWS && top + r < (int)csys.size(); r++)
 		{
 			int i = top + r;
-			const auto& d = cdevs[i];
+			const auto& s = csys[i];
 			bool on = i == csel;
 			float y = 82 + r * 64;
 			box(on ? "pick" : "slot", on, 18, y, 604, 56);
 			Color c = on ? p.onPick : p.muted;
-			text(fit(d.name, true, 20, 360), true, 20, 38, y + 16, c);
-			std::string tag = i == 0 ? "This one" : d.space == cdevs[0].space ? "Sharing" : "Not sharing";
+			text(fit(s.name, true, 20, 400), true, 20, 38, y + 16, c);
+			std::string tag = s.picked ? "Syncs" : "Off";
 			float tw = text(tag, true, 17, 0, 0, c, false, 0, true);
-			text(tag, true, 17, 586 - tw, y + 18, i > 0 && d.space == cdevs[0].space ? (on ? p.onPickAccent : p.accent) : c);
+			text(tag, true, 17, 586 - tw, y + 18, s.picked ? (on ? p.onPickAccent : p.accent) : c);
 		}
-		if (cdevs.empty()) text(cloudSyncing() ? "Looking..." : "No devices yet.", true, 20, 38, 98, p.muted);
 		float bw = faceWidth("B", "Back");
 		face("B", "Back", 18, bw);
-		std::string act = csel > 0 && csel < (int)cdevs.size() && !cloudSyncing() ? (cdevs[csel].space == cdevs[0].space ? "Stop sharing" : "Share") : "";
-		if (!act.empty())
+		if (!csys.empty())
 		{
+			std::string act = csys[csel].picked ? "Turn off" : "Turn on";
 			float aw = faceWidth("A", act);
 			face("A", act, 622 - aw, aw);
 		}

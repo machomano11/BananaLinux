@@ -117,12 +117,11 @@ and `gamelist.xml`. A save whose game isn't on the card is left alone on both si
 and states 30 s after the start, 5 s after each game and every 10 minutes (with Wi-Fi on and `banana/cloudsync.ini`
 there), stops it with SIGTERM when a game starts (it stops between files: nothing is written under a game), and Sync
 now runs it with the games, following `/run/banana/cloud.status`; that run keeps bananad from sleeping for idleness
-(`awake.pid`), and games that came down are read into the library. Devices are Slot's too: each run checks in at
-`Devices/<id>.ini` on the server (the handheld's name and the space it syncs in: the top of the folder or
-`Spaces/<name>`), and devices in one space share everything in it; the handheld's id and space are in
-`banana/cloudsync-device.ini`, a manifest per space beside it. Settings > Network > Cloud devices lists the server's
-devices (`/run/banana/cloud.devices`, written by each run) and A on one runs `banana-cloud share <id>`: this handheld
-joins that device's space, or moves to a space of its own when it already shared it.
+(`awake.pid`), and games that came down are read into the library. Each handheld picks the systems it syncs:
+`systems=GBA,GB,...` (the server's names) in `banana/cloudsync-device.ini`, beside the `id=` it checks in with at
+`Devices/<id>.ini` on the server, as on Slot; without it, every system. Settings > Network > Cloud systems ticks them.
+A system left out is left alone on the card and on the server (the layout keeps none of its files), so nothing is
+deleted anywhere when one is unticked.
 
 **File sharing** (Settings > Network): the card's data partition as `\\<address>\banana` over SMB3, served by
 the kernel (`ksmbd`, a module loaded only when sharing is switched on) and ksmbd-tools' `ksmbd.mountd`, as a guest

@@ -4,18 +4,15 @@
 //!
 //!   banana-cloud            the saves and the states (banana-ui runs it at the start, after each game, every 10 minutes)
 //!   banana-cloud all        the games too (Settings > Network > Cloud sync > Sync now)
-//!   banana-cloud share <id> start sharing with that device, or stop if this one already does; then the saves and
-//!                           the states in the new space (Settings > Network > Cloud devices)
 //!
 //! The account is banana/cloudsync.ini on the card, the same file as Slot's Config/cloudsync.ini: `url=` (the
 //! folder), `username=`, `password=`, and `enabled=0` to stop, `roms=0` to leave the games out. Without it nothing
 //! happens.
 //!
-//! Devices, as on Slot (slot-cloud's devices.rs): every run checks in at `Devices/<id>.ini` on the server with this
-//! handheld's name and the space it syncs in (the top of the folder, or `Spaces/<name>`); devices in one space share
-//! everything in it. This one's id and space are in banana/cloudsync-device.ini, what the last run in each space saw in
-//! banana/cloudsync.manifest (the top) or banana/cloudsync-<name>.manifest. The devices on the server, this one first,
-//! go to /run/banana/cloud.devices, a line each: "<id>\t<name>\t<space>\t<last seen>".
+//! This handheld, as on Slot (slot-cloud's devices.rs), is in banana/cloudsync-device.ini: `id=` (made up the first
+//! time) and `systems=`, the systems it syncs as the server names them (`GBA,GB,NDS`; Settings > Network > Cloud
+//! systems); without it, every system it has. A system left out is left alone, on the card and on the server. Every
+//! run checks in at `Devices/<id>.ini` on the server. What the last run saw: banana/cloudsync.manifest.
 //!
 //! How it went is one line in /run/banana/cloud.status: "running <done> <total> <what>|<file>" while it runs, then
 //! "done <sent> <received> <conflicts> <skipped>", "offline <why>", "error <why>" or "off" (no account). SIGTERM
@@ -43,10 +40,6 @@ extern "C" fn stop(_: libc::c_int) {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let all = args.first().is_some_and(|a| a == "all");
-    let share = match args.as_slice() {
-        [c, id] if c == "share" => Some(id.clone()),
-        _ => None,
-    };
     let data = PathBuf::from(std::env::var_os("BANANA_CARD").unwrap_or_else(|| "/data".into()));
     let run = PathBuf::from(std::env::var_os("BANANA_RUN").unwrap_or_else(|| "/run/banana".into()));
     let _ = std::fs::create_dir_all(&run);
@@ -67,71 +60,34 @@ fn main() {
     }
     // a run of the games can take a long time: bananad doesn't sleep for idleness while it goes on
     let _awake = all.then(|| Awake::take(&run.join("awake.pid"))).flatten();
-    status.set(&format!(
-        "running 0 0 {}|",
-        if share.is_some() { "Moving" } else { "Comparing" }
-    ));
+    status.set("running 0 0 Comparing|");
 
-    // check in, and move to another space first when asked
-    let mut me = this_device(&data);
+    let (mut me, picked) = this_device(&data);
     me.seen = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let mut top = account.remote();
-    let checked = devices::check_in(&mut top, &me);
-    let known = match (&checked, &share) {
-        (Ok(list), _) => list.clone(),
-        (Err(e), Some(_)) => return failed(&status, e),
-        (Err(e), None) => {
-            // the sync says so in a moment if the server is out of reach; the list is only for the settings
-            eprintln!("banana-cloud: checking in: {e}");
-            Vec::new()
-        }
-    };
-    if let Some(id) = share {
-        let Some(other) = known.iter().find(|d| d.id == id) else {
-            status.set(&format!("error no device {id} on the server"));
-            return;
-        };
-        let to = match other.space == me.space {
-            true => me.own_space(&me.space),
-            false => other.space.clone(),
-        };
-        eprintln!(
-            "banana-cloud: {} {}: now syncing in {to:?}",
-            if other.space == me.space {
-                "stopped sharing with"
-            } else {
-                "sharing with"
-            },
-            other.name
-        );
-        me.space = devices::clean_space(&to);
-        save_device(&data, &me);
-        if let Err(e) = devices::check_in(&mut top, &me) {
-            return failed(&status, &e);
-        }
+    if let Err(e) = devices::check_in(&mut account.remote(), &me) {
+        // the sync says so in a moment if the server is out of reach
+        eprintln!("banana-cloud: checking in: {e}");
     }
-    let known: Vec<Device> = known
-        .into_iter()
-        .map(|d| if d.id == me.id { me.clone() } else { d })
-        .collect();
-    write_devices(&run.join("cloud.devices"), &me, &known);
 
     let systems = std::fs::read_to_string(data.join("banana/systems.conf"))
         .or_else(|_| std::fs::read_to_string("/etc/banana/systems.conf"))
         .unwrap_or_default();
-    let card = layout::Banana::new(&data, &systems);
+    let mut card = layout::Banana::new(&data, &systems);
+    if let Some(picked) = &picked {
+        card = card.only(picked);
+    }
     let mut folders = slot_cloud::PROGRESS.to_vec();
     if all && account.games {
         folders.push(slot_cloud::GAMES);
     }
     eprintln!(
-        "banana-cloud: syncing {} with {} in {:?}",
+        "banana-cloud: syncing {} of {} with {}",
         folders.join(", "),
-        account.url,
-        me.space
+        picked.as_ref().map_or("every system".into(), |p| p.join(", ")),
+        account.url
     );
-    let mut remote = account.remote_in(&me.space);
-    let manifest = data.join(manifest_for(&me.space));
+    let mut remote = account.remote();
+    let manifest = data.join("banana/cloudsync.manifest");
     let tally = Tally::default();
     let done = AtomicBool::new(false);
     let result = std::thread::scope(|s| {
@@ -178,10 +134,10 @@ fn failed(status: &Status, e: &slot_cloud::Error) {
     status.set(&format!("{} {e}", if e.offline { "offline" } else { "error" }));
 }
 
-/// This handheld as banana/cloudsync-device.ini has it, given an id the first time ("rgds-" and four hex digits).
-fn this_device(data: &Path) -> Device {
-    let file = data.join(DEVICE_FILE);
-    let saved = read_ini(&file);
+/// This handheld as banana/cloudsync-device.ini has it, given an id the first time ("rgds-" and four hex digits),
+/// and the systems picked to sync (`None`: all of them).
+fn this_device(data: &Path) -> (Device, Option<Vec<String>>) {
+    let saved = read_ini(&data.join(DEVICE_FILE));
     let mut me = Device {
         id: saved
             .get("id")
@@ -189,20 +145,32 @@ fn this_device(data: &Path) -> Device {
             .cloned()
             .unwrap_or_default(),
         name: model(),
-        space: devices::clean_space(saved.get("space").map_or("", |s| s.as_str())),
+        space: String::new(),
         seen: 0,
     };
+    let picked = saved.get("systems").map(|s| systems_of(s));
     if me.id.is_empty() {
         me.id = format!("rgds-{:04x}", random16());
-        save_device(data, &me);
+        save_device(data, &me.id, picked.as_deref());
     }
-    me
+    (me, picked.filter(|p| !p.is_empty()))
+}
+
+/// `GBA, gb,NDS` as the server's names: GBA, GB, NDS.
+fn systems_of(list: &str) -> Vec<String> {
+    list.split([',', ' '])
+        .map(|s| s.trim().to_ascii_uppercase())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 const DEVICE_FILE: &str = "banana/cloudsync-device.ini";
 
-fn save_device(data: &Path, me: &Device) {
-    let text = format!("id={}\nspace={}\n", me.id, me.space);
+fn save_device(data: &Path, id: &str, picked: Option<&[String]>) {
+    let mut text = format!("id={id}\n");
+    if let Some(p) = picked {
+        text.push_str(&format!("systems={}\n", p.join(",")));
+    }
     let path = data.join(DEVICE_FILE);
     let tmp = path.with_extension("tmp");
     if let Err(e) = std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, &path)) {
@@ -228,33 +196,6 @@ fn random16() -> u16 {
         Err(_) => SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos() as u16),
-    }
-}
-
-/// What the last run in a space saw: banana/cloudsync.manifest for the top, banana/cloudsync-<name>.manifest else.
-fn manifest_for(space: &str) -> String {
-    match space.rsplit('/').next().filter(|_| !space.is_empty()) {
-        Some(name) => format!("banana/cloudsync-{name}.manifest"),
-        None => "banana/cloudsync.manifest".into(),
-    }
-}
-
-/// The devices on the server for the settings screen, this one first.
-fn write_devices(path: &Path, me: &Device, all: &[Device]) {
-    let line = |d: &Device| format!("{}\t{}\t{}\t{}\n", d.id, d.name.replace('\t', " "), d.space, d.seen);
-    let mut text = line(me);
-    for d in all.iter().filter(|d| d.id != me.id) {
-        text.push_str(&line(d));
-    }
-    if all.is_empty() {
-        return; // (out of reach: the list from the last run stays)
-    }
-    let tmp = path.with_extension("tmp");
-    if std::fs::write(&tmp, text)
-        .and_then(|_| std::fs::rename(&tmp, path))
-        .is_err()
-    {
-        let _ = std::fs::remove_file(&tmp);
     }
 }
 

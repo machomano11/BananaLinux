@@ -1,4 +1,6 @@
 #include "cloud.h"
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <signal.h>
@@ -55,7 +57,7 @@ namespace banana
 
 		bool running() { return runningPid() != 0; }
 
-		static void run(const char* arg, const char* arg2)
+		static void run(const char* arg)
 		{
 			if (running()) return;
 			const char* prog = getenv("BANANA_CLOUD");	// (another build of it, for testing)
@@ -68,7 +70,7 @@ namespace banana
 					setsid();
 					// its log with the menu's (stderr), at the lowest priority: the menu and the games first
 					if (nice(19) < 0) {}
-					execl(prog, prog, arg, arg2, (char*)nullptr);
+					execl(prog, prog, arg, (char*)nullptr);
 					_exit(127);
 				}
 				_exit(0);
@@ -76,24 +78,79 @@ namespace banana
 			if (p > 0) waitpid(p, nullptr, 0);
 		}
 
-		void start(bool all) { run(all ? "all" : nullptr, nullptr); }
-		void share(const std::string& id) { run("share", id.c_str()); }
+		void start(bool all) { run(all ? "all" : nullptr); }
 
-		std::vector<Device> devices()
+		static const char* const SYSTEMS[][2] = {
+			{ "GBA", "Game Boy Advance" }, { "GB", "Game Boy" }, { "GBC", "Game Boy Color" }, { "NES", "NES" },
+			{ "SNES", "Super Nintendo" }, { "MD", "Mega Drive" }, { "PS", "PlayStation" }, { "N64", "Nintendo 64" },
+			{ "NDS", "Nintendo DS" },
+		};
+
+		static std::string deviceFile(const std::string& dataDir) { return dataDir + "/cloudsync-device.ini"; }
+
+		static void trim(std::string& s) { s.erase(0, s.find_first_not_of(" \t")); s.erase(s.find_last_not_of(" \t\r") + 1); }
+
+		std::vector<System> systems(const std::string& dataDir)
 		{
-			std::vector<Device> out;
-			std::ifstream f(runDir() + "/cloud.devices");
+			std::string list;
+			bool has = false;
+			std::ifstream f(deviceFile(dataDir));
 			std::string ln;
 			while (std::getline(f, ln))
 			{
-				std::vector<std::string> c;
-				size_t a = 0, b;
-				while ((b = ln.find('\t', a)) != std::string::npos) { c.push_back(ln.substr(a, b - a)); a = b + 1; }
-				c.push_back(ln.substr(a));
-				if (c.size() < 4 || c[0].empty()) continue;
-				out.push_back({ c[0], c[1], c[2], atoll(c[3].c_str()) });
+				size_t eq = ln.find('=');
+				if (eq == std::string::npos) continue;
+				std::string k = ln.substr(0, eq);
+				trim(k);
+				if (k == "systems") { list = ln.substr(eq + 1); has = true; }
+			}
+			for (auto& ch : list) ch = (char)toupper((unsigned char)ch);
+			std::vector<std::string> picked;
+			std::string cur;
+			for (char ch : list + ",")
+			{
+				if (ch == ',' || ch == ' ' || ch == '\t' || ch == '\r') { if (!cur.empty()) picked.push_back(cur); cur.clear(); }
+				else cur += ch;
+			}
+			if (picked.empty()) has = false;	// (as banana-cloud reads it: an empty list is every system)
+			std::vector<System> out;
+			for (auto& s : SYSTEMS)
+			{
+				bool on = !has;
+				for (auto& p : picked) on |= p == s[0];
+				out.push_back({ s[0], s[1], on });
 			}
 			return out;
+		}
+
+		bool setSystems(const std::string& dataDir, const std::vector<System>& all)
+		{
+			std::string list;
+			bool every = true;
+			for (auto& s : all)
+			{
+				every &= s.picked;
+				if (s.picked) list += (list.empty() ? "" : ",") + s.id;
+			}
+			if (list.empty()) list = "none";
+			// the other lines (the id banana-cloud made up) stay as they are
+			std::string out;
+			std::ifstream f(deviceFile(dataDir));
+			std::string ln;
+			while (std::getline(f, ln))
+			{
+				size_t eq = ln.find('=');
+				std::string k = eq == std::string::npos ? "" : ln.substr(0, eq);
+				trim(k);
+				if (k != "systems") out += ln + "\n";
+			}
+			if (!every) out += "systems=" + list + "\n";
+			std::string tmp = deviceFile(dataDir) + ".tmp";
+			{
+				std::ofstream o(tmp);
+				if (!(o << out)) return false;
+			}
+			return rename(tmp.c_str(), deviceFile(dataDir).c_str()) == 0;
 		}
 
 		void stop()

@@ -47,6 +47,8 @@ pub struct Banana {
     /// Each game's name (its file name without the extension) to the system it is in; the first system in
     /// [`SYSTEMS`] wins for a name in two folders.
     owner: BTreeMap<String, &'static str>,
+    /// The systems picked to sync on this handheld (Settings > Network > Cloud systems); `None` for all of them.
+    picked: Option<BTreeSet<String>>,
 }
 
 impl Banana {
@@ -70,7 +72,18 @@ impl Banana {
             data: data.to_path_buf(),
             folders,
             owner,
+            picked: None,
         }
+    }
+
+    /// Syncs only these systems (the server's names): the others' files are left alone, here and on the server.
+    pub fn only(mut self, systems: &[String]) -> Banana {
+        self.picked = Some(systems.iter().cloned().collect());
+        self
+    }
+
+    fn picked(&self, server: &str) -> bool {
+        self.picked.as_ref().is_none_or(|p| p.contains(server))
     }
 
     fn owns(&self, game: &str, server: &str) -> bool {
@@ -89,6 +102,9 @@ impl Banana {
 impl Layout for Banana {
     fn local(&self, rel: &str) -> Option<PathBuf> {
         let parts: Vec<&str> = rel.split('/').collect();
+        if !self.picked(parts.get(1)?) {
+            return None;
+        }
         match parts.as_slice() {
             ["Saves", sys, file] => {
                 let game = file.strip_suffix(".sav")?;
@@ -115,6 +131,21 @@ impl Layout for Banana {
     }
 
     fn walk(&self, folder: &str, found: &mut dyn FnMut(String, PathBuf)) {
+        self.walk_all(folder, &mut |rel: String, path| {
+            if rel.split('/').nth(1).is_some_and(|sys| self.picked(sys)) {
+                found(rel, path);
+            }
+        });
+    }
+
+    fn root(&self) -> &Path {
+        &self.data
+    }
+}
+
+impl Banana {
+    /// Every file under `folder`, picked or not.
+    fn walk_all(&self, folder: &str, found: &mut dyn FnMut(String, PathBuf)) {
         match folder {
             "Saves" => {
                 for (name, path) in files(&self.saves()) {
@@ -166,10 +197,6 @@ impl Layout for Banana {
             // Slot's cartridge art: BananaOS keeps its art its own way
             _ => {}
         }
-    }
-
-    fn root(&self) -> &Path {
-        &self.data
     }
 }
 
@@ -367,5 +394,15 @@ mod tests {
         assert_eq!(state_of("A.state.of.mind.state1"), Some("A.state.of.mind"));
         assert_eq!(state_of("Zelda.state.png"), None);
         assert_eq!(state_of(".state"), None);
+    }
+
+    #[test]
+    fn systems_not_picked_are_left_alone() {
+        let (_d, b) = card();
+        let b = b.only(&["GBA".to_string(), "NDS".to_string()]);
+        assert_eq!(walked(&b, "Saves"), ["Saves/GBA/Zelda.sav", "Saves/NDS/Mario Kart DS.sav"]);
+        assert_eq!(walked(&b, "Games"), ["Games/GBA/Zelda.gba", "Games/NDS/Mario Kart DS.nds"]);
+        assert_eq!(b.local("Saves/GB/Tetris.sav"), None);
+        assert_eq!(b.local("Games/PS/Crash.chd"), None);
     }
 }
