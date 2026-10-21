@@ -178,7 +178,9 @@ with_data() {   # with_data <command...>: the card's data partition (exFAT) moun
     DATA=$OUT/data; mkdir -p "$DATA"
     LOOP=$($SUDO losetup -f --show -o $(part_offset 4) "$CARD") || { bad "no loop device for the card"; return 1; }
     $SUDO modprobe exfat 2>/dev/null || true
-    $SUDO mount -t exfat "$LOOP" "$DATA" 2> "$OUT/mount.err" || $SUDO mount.exfat-fuse "$LOOP" "$DATA" 2>> "$OUT/mount.err" ||
+    # owned by us (exFAT has no owners: without uid= a root mount is root's, and the steps below write to it)
+    mine="uid=$(id -u),gid=$(id -g)"
+    $SUDO mount -t exfat -o "$mine" "$LOOP" "$DATA" 2> "$OUT/mount.err" || $SUDO mount.exfat-fuse -o "$mine" "$LOOP" "$DATA" 2>> "$OUT/mount.err" ||
         { bad "the data partition can't be mounted (no exFAT in the kernel, no exfat-fuse): $(tr '\n' ' ' < "$OUT/mount.err")"; $SUDO losetup -d "$LOOP"; return 1; }
     "$@"; r=$?
     $SUDO umount "$DATA" 2>/dev/null || $SUDO fusermount -u "$DATA"; $SUDO losetup -d "$LOOP"; LOOP=; DATA=
