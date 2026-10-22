@@ -16,6 +16,15 @@ File sharing: Settings > File sharing puts this card on the network (\\<address>
 smb://<address>/banana on a Mac), so games can be copied in over Wi-Fi. No password: leave it off on networks
 you don't trust.
 
+Cloud sync: your saves, save states and games on your own WebDAV server (Nextcloud, a NAS, rclone serve webdav),
+shared with Slot on the TrimUI Brick and the RG SP. Put the same cloudsync.ini as Slot's in banana/ on a computer:
+    url=https://my.server/slot
+    username=me
+    password=secret
+(roms=0 leaves the games out; enabled=0 stops it). The saves and states sync on their own; Settings > Network >
+Cloud sync > Sync now does the games too; Cloud systems picks which systems this handheld syncs.
+File sharing never shows cloudsync.ini.
+
 SSH (for working on Banana itself): put your public key in banana/ssh/authorized_keys, switch on
 Settings > SSH, then ssh root@<address>. Keys only, no passwords.
 

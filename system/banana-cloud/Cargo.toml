@@ -1,0 +1,34 @@
+[package]
+name = "banana-cloud"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "GPL-3.0-or-later"
+description = "BananaOS's cloud sync: saves, states and games with a WebDAV folder, shared with Slot"
+
+[dependencies]
+slot-cloud = { path = "slot/slot-cloud" }
+libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[workspace]
+members = [".", "slot/slot-cloud", "slot/slot-net"]
+
+# What the imported Slot crates take from their workspace.
+[workspace.package]
+edition = "2021"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+
+[workspace.dependencies]
+libc = "0.2"
+tempfile = "3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

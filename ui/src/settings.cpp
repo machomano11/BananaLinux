@@ -1,5 +1,6 @@
 #include <ctime>
 #include "settings.h"
+#include "cloud.h"
 #include "settings_defaults.h"
 #include "theme.h"
 #include <algorithm>
@@ -402,6 +403,8 @@ namespace banana
 		add(W, "phone", "Wi-Fi", "", menu, "wifi", { "On", "Off" }, { "on", "off" });
 		add(W, "phone", "Network", "The networks around: A on one joins it, with a password typed on the keyboard here (or by touch).", "", "network", {}, {}, Item::PAGE);
 		add(W, "phone", "File sharing", "", menu, "share", { "Off", "On" }, { "off", "on" });
+		add(W, "phone", "Cloud sync", "", "", "cloud", {}, {}, Item::PAGE);
+		add(W, "phone", "Cloud systems", "Which systems this handheld syncs: their saves, save states and games. A system left out is left alone, here and on the server.", "", "cloudsys", {}, {}, Item::PAGE);
 		const char* S = "System";
 		{
 			std::vector<std::string> names, tzs;
@@ -677,6 +680,8 @@ namespace banana
 		{
 			if (dir <= 0) return NONE;
 			if (it.key == "scrape") { startScrape(); return MOVED; }
+			if (it.key == "cloud") { startCloud(); return MOVED; }
+			if (it.key == "cloudsys") { openCloudSystems(); return MOVED; }
 			if (it.key == "update") openUpdates(); else if (it.key == "setup") openSetup(); else openNetworks();
 			return MOVED;
 		}
@@ -796,6 +801,7 @@ namespace banana
 		if (page == KEYBOARD) return pressKeyboard(k);
 		if (page == GAME) return pressGame(k);
 		if (page == UPDATES) return pressUpdates(k);
+		if (page == CLOUD_SYSTEMS) return pressCloudSystems(k);
 		if (page == SETUP) return pressSetup(k);
 		if (inGroups) return pressGroups(k);
 		int g = groupOf(sel), b = groupStart(g), e = groupEnd(g);
@@ -871,6 +877,19 @@ namespace banana
 				if (r == 3) return NONE;	// ScreenScraper: greyed out
 				if (r != wsel) { wsel = r; return MOVED; }
 				return pressSetup(Key::A);
+			}
+			return NONE;
+		}
+		if (page == CLOUD_SYSTEMS)
+		{
+			if (downY >= 418 && downY <= 466) return pressCloudSystems(downX < 320 ? Key::B : Key::A);
+			int top = std::max(0, std::min(csel - ROWS + 1, (int)csys.size() - ROWS));
+			for (int r = 0; r < ROWS && top + r < (int)csys.size(); r++)
+			{
+				float ry = 82 + r * 64;
+				if (downY < ry || downY > ry + 56) continue;
+				if (top + r != csel) { csel = top + r; return MOVED; }
+				return pressCloudSystems(Key::A);
 			}
 			return NONE;
 		}
@@ -1262,6 +1281,7 @@ namespace banana
 		if (page == KEYBOARD) { renderKeyboard(); return; }
 		if (page == GAME) { renderGame(); return; }
 		if (page == UPDATES) { renderUpdates(); return; }
+		if (page == CLOUD_SYSTEMS) { renderCloudSystems(); return; }
 		if (page == SETUP) { renderSetup(); return; }
 		if (inGroups) { renderGroups(); return; }
 		SPal p = pal(light);
@@ -1297,6 +1317,12 @@ namespace banana
 			wrapped("Fetching covers and title screens. The menu shows them as they come, and it carries on if you leave this screen.", 20, 50, 196, 540, 4, p.muted);
 			scrapeBar(50, 330, 540);
 		}
+		else if (cur.key == "cloud" && cloudSyncing())
+		{
+			wrapped("Syncing the saves, the save states and the games with your server. It carries on if you leave this screen, and the handheld stays awake until it is done.", 20, 50, 196, 540, 4, p.muted);
+			scrapeBar(50, 330, 540, cloudLine);
+		}
+		else if (cur.key == "cloud") wrapped(message.empty() ? cloudHelp() : message, 20, 50, 196, 540, 7, p.muted);
 		else wrapped(help, 20, 50, 196, 540, 7, p.muted);
 		be->endScreen();
 
@@ -1330,6 +1356,14 @@ namespace banana
 			else if (it.kind == Item::PAGE && it.key == "network") v = wstat.connected ? fit(wstat.ssid, true, 19, 300) : (wifiOn() ? "Choose" : "");
 			else if (it.kind == Item::PAGE && it.key == "update") v = updatesWaiting();
 			else if (it.kind == Item::PAGE && it.key == "scrape") v = scrapeShort();
+			else if (it.kind == Item::PAGE && it.key == "cloud") v = cloud::summary(cloudLine, cloud::configured(data));
+			else if (it.kind == Item::PAGE && it.key == "cloudsys" && cloud::configured(data))
+			{
+				auto s = cloud::systems(data);
+				int n = 0;
+				for (auto& x : s) n += x.picked;
+				v = n == (int)s.size() ? "All" : n ? std::to_string(n) + " of " + std::to_string(s.size()) : "None";
+			}
 			if (v.empty()) continue;
 			float vw = text(v, true, 19, 0, 0, p.ink, false, 0, true);
 			Color vc = on ? (armed == i ? p.onPickAccent : p.onPick) : p.muted;
@@ -1341,7 +1375,7 @@ namespace banana
 		be->popClip();
 		float bw = faceWidth("B", "Back");
 		face("B", "Back", 18, bw);
-		std::string act = cur.kind == Item::ACTION ? (armed == sel ? "Confirm" : cur.label) : cur.kind == Item::INFO ? "" : cur.key == "scrape" ? (scraping() ? "" : "Start") : cur.kind == Item::PAGE ? "Open" : "Change";
+		std::string act = cur.kind == Item::ACTION ? (armed == sel ? "Confirm" : cur.label) : cur.kind == Item::INFO ? "" : cur.key == "scrape" ? (scraping() ? "" : "Start") : cur.key == "cloud" ? (cloudSyncing() ? "" : "Sync now") : cur.kind == Item::PAGE ? "Open" : "Change";
 		if (!act.empty())
 		{
 			float aw = faceWidth("A", act);
@@ -1403,6 +1437,7 @@ namespace banana
 		now = t;
 		if (!mOpen) return false;
 		bool scrapeChanged = pollScrape(t);
+		scrapeChanged |= pollCloud(t);
 		if (raCheck)
 		{
 			std::lock_guard<std::mutex> l(raCheck->mu);
@@ -1468,6 +1503,7 @@ namespace banana
 		int mine = raCheck ? 200 : toastUntil > t ? std::max(0, (int)(toastUntil - t) + 1) : -1;
 		if (mine >= 0 && (w < 0 || mine < w)) w = mine;
 		if (scraping() && (w < 0 || w > 500)) w = std::max(0, (int)(scrapeNext - t));	// the box art's progress
+		if (cloudSyncing() && (w < 0 || w > 500)) w = std::max(0, (int)(cloudNext - t));	// the sync's
 		return w;
 	}
 
@@ -2527,10 +2563,10 @@ namespace banana
 		return "Not yet";
 	}
 
-	void Settings::scrapeBar(float x, float y, float w)
+	void Settings::scrapeBar(float x, float y, float w, const std::string& line)
 	{
 		SPal p = pal(light);
-		std::istringstream in(scrapeLine);
+		std::istringstream in(line.empty() ? scrapeLine : line);
 		std::string state, rest;
 		int a = 0, b = 0;
 		in >> state >> a >> b;
@@ -2541,6 +2577,137 @@ namespace banana
 		if (b > 0) be->fill(X(x + 2), X(y + 2), X((w - 4) * a / b), X(10), p.accent);
 		text(fit(sys.empty() ? "Starting" : sys, true, 17, w), true, 17, x, y + 26, p.ink);
 		text(fit(game, false, 16, w), false, 16, x, y + 52, p.muted);
+	}
+
+	// ---- cloud sync: banana-cloud ------------------------------------------------------------------------------
+	bool Settings::pollCloud(double t)
+	{
+		if (t < cloudNext) return false;
+		cloudNext = t + 500;
+		std::string ln = cloud::status();
+		// a run that is gone (crashed or killed) without its last word
+		if (ln.compare(0, 8, "running ") == 0 && !cloud::running()) ln = "error stopped";
+		if (ln == cloudLine) return false;
+		bool was = cloudSyncing();
+		cloudLine = ln;
+		if (was && !cloudSyncing() && cloudWatching)
+		{
+			cloudWatching = false;
+			std::istringstream in(ln);
+			std::string state;
+			int sent = 0, got = 0;
+			in >> state >> sent >> got;
+			if (state == "done" && got > 0) libChanged = true;	// games may have come: the library again
+		}
+		return true;
+	}
+
+	void Settings::startCloud()
+	{
+		message.clear();
+		if (cloudSyncing()) return;
+		if (!cloud::configured(data)) { message = cloudHelp(); return; }
+		if (!wifiOn()) { message = "Wi-Fi is off: switch it on in Network first."; return; }
+		cloud::start(true);
+		cloudLine = "running 0 0 Starting|";
+		cloudWatching = true;
+		cloudNext = now + 500;
+	}
+
+	std::string Settings::cloudHelp() const
+	{
+		if (!cloud::configured(data))
+			return "Keeps your saves, save states and games on your own WebDAV server, shared with Slot on the TrimUI Brick and "
+				"the RG SP. To set it up, copy Slot's cloudsync.ini (url, username and password) into the banana folder on the card.";
+		return "Your saves and save states sync on their own: when the menu starts, after each game and every 10 minutes. "
+			"Sync now does the games too (roms=0 in banana/cloudsync.ini leaves them out). A file changed on two handhelds "
+			"keeps the newer copy, and the older one stays beside it as a .conflict file.";
+	}
+
+	// ---- cloud systems: which systems this handheld syncs ---------------------------------------------------------
+	void Settings::openCloudSystems()
+	{
+		message.clear();
+		if (!cloud::configured(data)) { message = cloudHelp(); return; }
+		page = CLOUD_SYSTEMS;
+		csel = 0;
+		csys = cloud::systems(data);
+	}
+
+	Settings::Result Settings::pressCloudSystems(Key k)
+	{
+		int n = (int)csys.size();
+		switch (k)
+		{
+		case Key::UP: case Key::DOWN:
+			if (!n) return NONE;
+			csel = (csel + (k == Key::UP ? -1 : 1) + n) % n;
+			message.clear();
+			return MOVED;
+		case Key::A: case Key::RIGHT:
+		{
+			if (!n) return NONE;
+			auto& s = csys[csel];
+			s.picked = !s.picked;
+			if (!cloud::setSystems(data, csys)) { s.picked = !s.picked; message = "Couldn't save that on the card."; return MOVED; }
+			message = s.picked ? s.name + " syncs from the next sync on." : s.name + " is left alone from now on, here and on the server (nothing is deleted).";
+			return MOVED;
+		}
+		case Key::B: case Key::LEFT:
+			page = LIST; message.clear();
+			return MOVED;
+		case Key::START:
+			page = LIST; mOpen = false; return CLOSED;
+		default: return NONE;
+		}
+	}
+
+	void Settings::renderCloudSystems()
+	{
+		SPal p = pal(light);
+		int picked = 0;
+		for (auto& s : csys) picked += s.picked;
+		be->beginScreen(0);
+		box("screen", false, 0, 0, 640, 480);
+		box("hero", false, 18, 20, 604, 436);
+		icon("phone", 50, 56, 3);
+		text("Network", true, 17, 170, 62, p.muted, true, 1.4f);
+		text("Cloud systems", true, 30, 170, 88, p.ink);
+		std::string st = picked == (int)csys.size() ? "Syncing every system" : picked ? "Syncing " + std::to_string(picked) + " of " + std::to_string(csys.size()) : "Syncing nothing";
+		text(fit(st, true, 22, 420), true, 22, 170, 130, p.accent);
+		std::string help = !message.empty() ? message
+			: "The ticked systems sync on this handheld: their saves, save states and, with Sync now, their games. Each "
+			  "handheld has its own list (on Slot: HOME > Cloud Sync). A on a system ticks or unticks it.";
+		wrapped(help, 20, 50, 196, 540, 7, p.muted);
+		be->endScreen();
+
+		be->beginScreen(1);
+		box("screen", false, 0, 0, 640, 480);
+		box("bubble", false, 18, 14, 604, 54);
+		text("Systems to sync", true, 22, 38, 28, p.ink);
+		int top = std::max(0, std::min(csel - ROWS + 1, (int)csys.size() - ROWS));
+		for (int r = 0; r < ROWS && top + r < (int)csys.size(); r++)
+		{
+			int i = top + r;
+			const auto& s = csys[i];
+			bool on = i == csel;
+			float y = 82 + r * 64;
+			box(on ? "pick" : "slot", on, 18, y, 604, 56);
+			Color c = on ? p.onPick : p.muted;
+			text(fit(s.name, true, 20, 400), true, 20, 38, y + 16, c);
+			std::string tag = s.picked ? "Syncs" : "Off";
+			float tw = text(tag, true, 17, 0, 0, c, false, 0, true);
+			text(tag, true, 17, 586 - tw, y + 18, s.picked ? (on ? p.onPickAccent : p.accent) : c);
+		}
+		float bw = faceWidth("B", "Back");
+		face("B", "Back", 18, bw);
+		if (!csys.empty())
+		{
+			std::string act = csys[csel].picked ? "Turn off" : "Turn on";
+			float aw = faceWidth("A", act);
+			face("A", act, 622 - aw, aw);
+		}
+		be->endScreen();
 	}
 
 	// ---- the game panel -----------------------------------------------------------------------------------------

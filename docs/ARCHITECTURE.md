@@ -108,6 +108,25 @@ replaced), restarts wpa_supplicant and follows `wifi status` until it has an add
 wpa_cli's action script only once wpa_supplicant is connected, so a handheld with no network in reach isn't kept
 awake asking for an address. Company (802.1X) and WEP networks are listed but go in `wifi.conf` by hand.
 
+**Cloud sync** (Settings > Network): `banana-cloud` (`system/banana-cloud`, Rust) keeps the card in step with a WebDAV
+folder that Slot on the TrimUI Brick and the RG SP syncs with too. The sync itself is Slot's (`slot-cloud`, imported
+unchanged into `system/banana-cloud/slot` by `tools/import-slot-cloud.sh`): a manifest of each file as both sides had
+it after the last run says which side changed; a file changed on both keeps the newer copy and the other as
+`<name>.conflict-<when>`; saves and games are never deleted on the other side; uploads go to a hidden name and are
+renamed once whole. The server keeps Slot's names, and `src/layout.rs` maps them onto Banana's card: `Saves/<P>/<game>.sav`
+is RetroArch's `saves/<game>.srm` (the same cores as Slot's, so the same bytes), the system being the one whose
+`roms` folder has the game; `saves/nds/<game>.sav` is `Saves/NDS`; RetroArch's states go to
+`States/<P>/retroarch/<game>/`, a core folder Slot never opens; `Games/<P>/` is `roms/<folder>/` without its `media`
+and `gamelist.xml`. A save whose game isn't on the card is left alone on both sides. banana-ui runs it for the saves
+and states 30 s after the start, 5 s after each game and every 10 minutes (with Wi-Fi on and `banana/cloudsync.ini`
+there), stops it with SIGTERM when a game starts (it stops between files: nothing is written under a game), and Sync
+now runs it with the games, following `/run/banana/cloud.status`; that run keeps bananad from sleeping for idleness
+(`awake.pid`), and games that came down are read into the library. Each handheld picks the systems it syncs:
+`systems=GBA,GB,...` (the server's names) in `banana/cloudsync-device.ini`, beside the `id=` it checks in with at
+`Devices/<id>.ini` on the server, as on Slot; without it, every system, and empty, none. Settings > Network > Cloud systems ticks them.
+A system left out is left alone on the card and on the server (the layout keeps none of its files), so nothing is
+deleted anywhere when one is unticked.
+
 **File sharing** (Settings > Network): the card's data partition as `\\<address>\banana` over SMB3, served by
 the kernel (`ksmbd`, a module loaded only when sharing is switched on) and ksmbd-tools' `ksmbd.mountd`, as a guest
 share forced to root (exFAT has no owners) with DOS attributes not stored (exFAT has no extended attributes). No

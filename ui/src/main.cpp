@@ -19,6 +19,7 @@
 #include "soft.h"
 #include "splash.h"
 #include "settings.h"
+#include "cloud.h"
 #include "settings_defaults.h"
 #include "theme.h"
 #include "zip.h"
@@ -1288,6 +1289,9 @@ int main(int argc, char** argv)
 		}
 	};
 
+	// cloud sync of the saves and the states (cloud.h): a while after the start (Wi-Fi first), after each game, every
+	// 10 minutes. Settings > Network > Cloud sync runs the games too.
+	double cloudDue = nowMs() + 30000;
 	// Mode B (the game panel off, or its DRM lease failed): the game takes both panels and banana-ui draws nothing,
 	// so it has no screen to put the quick-menu sheet on; the game alone owns the panels until it ends.
 	auto runGame = [&](int game)
@@ -1296,6 +1300,7 @@ int main(int argc, char** argv)
 		std::string rom = lib.gameAt(game).path;
 		std::string cmd = replaceAll(replaceAll(sd.run, "%ROM%", shellQuote(rom)), "%SYSTEM%", shellQuote(sd.id));
 		logf("starting %s: %s", sd.id.c_str(), cmd.c_str());
+		cloud::stop();	// a sync stops between files: nothing is written under a game (it goes on after it)
 		{
 			std::ofstream f(o.data + "/last-system");
 			f << ui->systemIndex() << "\n";
@@ -1413,6 +1418,7 @@ int main(int argc, char** argv)
 		if (disp.isOpen()) irisFromGame(disp, be, *ui);
 		dirty = true;
 		batteryDue = true;	// a step passed during the game shows now
+		cloudDue = nowMs() + 5000;	// the game's save out to the server (once it has been still a few seconds)
 	};
 
 	if (system("banana-perf ui") != 0) {}
@@ -1437,6 +1443,11 @@ int main(int argc, char** argv)
 			if (rearrange(lib, *ui)) dirty = true;
 		}
 		if (input.rescanDue()) input.open(o.touch, disp.width(), disp.height());	// a pad came or went
+		if (now >= cloudDue)
+		{
+			cloudDue = now + 10 * 60 * 1000;
+			if (cloud::configured(o.data) && getConfValue(o.data + "/settings.conf", "wifi", "on") != "off") cloud::start(false);
+		}
 		if (settingsView.isOpen())
 		{
 			std::lock_guard<std::mutex> l(worker.uiLock);

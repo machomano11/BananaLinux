@@ -13,6 +13,7 @@ Banana's own code (ui/src, system/, buildroot/package, tools/) is under the MIT 
 | Generic DSI panel driver | buildroot/board/rgds/kernel/panel-generic-dsi.c | ROCKNIX (stolen/overlay_server) | GPL-2.0 |
 | ROCKNIX joypad driver | buildroot/board/rgds/kernel/rocknix-* | [hackbar/rocknix-joypad](https://github.com/hackbar/rocknix-joypad) | GPL-2.0-or-later |
 | RK3568 TF-A (BL31) | buildroot/board/rgds/rkbin | [rockchip-linux/rkbin](https://github.com/rockchip-linux/rkbin) | Rockchip's binary license (rkbin/LICENSE) |
+| Slot's cloud sync (slot-cloud, slot-net), built into banana-cloud, which is therefore GPL-3.0-or-later as a whole | system/banana-cloud/slot | [machomano11/slot](https://github.com/machomano11/slot), imported by tools/import-slot-cloud.sh (commit in slot/UPSTREAM) | GPL-3.0-or-later (system/banana-cloud/slot/LICENSE) |
 | Nintendo DS cheat files (Action Replay codes, for BananaDS) | buildroot/package/libretro-cheats-nds (tarball) | [libretro/libretro-database](https://github.com/libretro/libretro-database) cht/Nintendo - Nintendo DS at 12c21cf | CC BY-SA 4.0 |
 
 RetroArch's joypad map for the RG DS (`buildroot/package/retroarch/retrogame_joypad.cfg`) is ROCKNIX's (GPL-2.0).

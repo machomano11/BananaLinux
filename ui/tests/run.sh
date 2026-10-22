@@ -100,6 +100,36 @@ for size in 640x480 1024x768; do
     for s in pergame pergame-shader pergame-none; do
         [ -s "$OUT/$size-$s-top.png" ] && [ -s "$OUT/$size-$s-bot.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }
     done
+    # Cloud sync (Settings > Network, the fourth row): not set up (A says how), then with banana/cloudsync.ini a sync
+    # running (its line in the status file, its pid alive) and one done, and A starting banana-cloud with the games
+    clog=$OUT/$size-cloud.log; CR=$OUT/run; rm -rf "$CR"; mkdir -p "$CR"
+    run_cloud() { BANANA_RUN="$CR" BANANA_CLOUD="$HERE/tests/fake-cloud.sh" BANANA_WIFI="$HERE/tests/fake-wifi.sh" FAKE_WIFI_CONF="$FX/data/wifi.conf" \
+        "$HERE/banana-ui" --headless "$OUT/$size-" --size $size --assets "$HERE/assets/rnds" \
+        --systems "$HERE/../system/rootfs/etc/banana/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 0; press start; press r; press r; press r; press r; press a; press down; press down; press down; $1" 2>> "$clog" ||
+        { echo "FAIL $size: banana-ui (cloud sync) exited $?"; fail=1; }; }
+    rm -f "$FX/data/cloudsync.ini"
+    run_cloud "shot cloud-off; press a; shot cloud-how"
+    [ -e "$CR/cloud.ran" ] && { echo "FAIL $size: Sync now ran with no account"; fail=1; }
+    printf 'url=https://dav.example/slot\nusername=me\n' > "$FX/data/cloudsync.ini"
+    sleep 30 & busy=$!
+    echo $busy > "$CR/cloud.lock"; echo "running 37 120 Games|Games/GBA/Orchard Tactics.gba" > "$CR/cloud.status"
+    run_cloud "shot cloud-running"
+    kill $busy; : > "$CR/cloud.lock"; echo "done 2 1 0 0" > "$CR/cloud.status"
+    run_cloud "shot cloud-done; press a; wait 600; shot cloud-started"
+    for i in 1 2 3 4 5 6 7 8 9 10; do [ -e "$CR/cloud.ran" ] && break; sleep 0.2; done
+    [ "$(cat "$CR/cloud.ran" 2>/dev/null)" = all ] || { echo "FAIL $size: Sync now didn't run banana-cloud all"; fail=1; }
+    # Cloud systems (the fifth row): every system ticked at first; A on the second (Game Boy) and down twice to N64 and A
+    # leave those two out of banana/cloudsync-device.ini, the id banana-cloud made up kept
+    printf 'id=rgds-1a2b\n' > "$FX/data/cloudsync-device.ini"
+    run_cloud "press down; shot cloudsys-row; press a; press down; press a; shot cloudsys-off; press down; press down; press down; press down; press down; press down; press a; wait 300"
+    grep -qx 'id=rgds-1a2b' "$FX/data/cloudsync-device.ini" && grep -qx 'systems=GBA,GBC,NES,SNES,MD,PS,NDS' "$FX/data/cloudsync-device.ini" ||
+        { echo "FAIL $size: Cloud systems wrote: $(cat "$FX/data/cloudsync-device.ini")"; fail=1; }
+    rm -f "$FX/data/cloudsync-device.ini"
+    rm -f "$FX/data/cloudsync.ini"
+    for s in cloud-off cloud-how cloud-running cloud-done cloud-started cloudsys-row cloudsys-off; do
+        [ -s "$OUT/$size-$s-top.png" ] && [ -s "$OUT/$size-$s-bot.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }
+    done
     # Settings > System's two resets: the system one puts the menu's own keys back (theme, sounds, ...) and leaves
     # the emulator's (core.gba, ra_shader) alone; then the emulator one puts those back and leaves the menu's alone
     rlog=$OUT/$size-reset.log
