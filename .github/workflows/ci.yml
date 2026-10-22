@@ -8,6 +8,11 @@ on:
         description: "Also build the SD card images (an hour or more)"
         type: boolean
         default: false
+      board:
+        description: "Which handheld to build for (each one adds an hour or more)"
+        type: choice
+        options: [rgds-plus, rgds, both]
+        default: rgds-plus
 
 jobs:
   checks:
@@ -54,7 +59,7 @@ jobs:
     timeout-minutes: 360
     strategy:
       matrix:
-        board: [rgds, rgds-plus]
+        board: ${{ fromJSON(inputs.board == 'both' && '["rgds","rgds-plus"]' || format('["{0}"]', inputs.board)) }}
     env:
       BR2_DL_DIR: ${{ github.workspace }}/dl
     steps:
@@ -112,7 +117,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       matrix:
-        board: [rgds, rgds-plus]
+        board: ${{ fromJSON(inputs.board == 'both' && '["rgds","rgds-plus"]' || format('["{0}"]', inputs.board)) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
