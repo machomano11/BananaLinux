@@ -81,6 +81,27 @@ fi
 # the settings screen's choices (KEY=value lines), exported to SuperDrastic
 . /usr/libexec/banana/kv-env
 kv_export /data/banana/superdrastic.conf DSFLIP_ DSHOOK_  # (read, never run: kv-env)
+# The microphone: SuperDrastic records ALSA's "default" capture device (bananad points that at the rk817, the real
+# microphone, through /run/banana/asound.conf) and presses DraStic's fake-mic key while the level is above this
+# threshold. Its own default is 0 (off), so a game that asks for the mic (Phantom Hourglass's candle, a Nintendogs
+# call) would get silence whatever bananad routes; 0.15 is its "medium" (high 0.03, low 0.3), the fallback here.
+# Settings > Nintendo DS > Microphone writes DSHOOK_MIC_THRESH to banana/superdrastic.conf and wins over it (0 = off).
+# A value the emulator can't read (empty, a word, outside 0..1) would also leave it off, so those fall back to medium.
+mic=${DSHOOK_MIC_THRESH:-}
+awk -v t="$mic" 'BEGIN { exit !(t ~ /^[0-9]*\.?[0-9]+$/ && t + 0 <= 1) }' 2>/dev/null || mic=0.15
+export DSHOOK_MIC_THRESH=$mic
+# SuperDrastic records the microphone itself: src/audio.c's mic_thread opens ALSA's "default" capture (its
+# alsa_pcm() hardcodes "default"; there is no device setting of its own or in drastic.cfg, so the alias is the only
+# path and no node can be named here), at 44.1 kHz mono. bananad's capture.pcm is the plug that resamples that to
+# the 48 kHz the rk817's symmetric_rate I2S DAI shares with the game's playback; a raw node would instead hand the
+# card 44.1 kHz and the driver would refuse the second stream, so mic_thread logs "no capture device" and the game
+# gets silence. Verify "default" is that plug: a missing file, or one whose capture.pcm isn't, is the silent
+# failure this line exists to make loud.
+if [ ! -e /run/banana/asound.conf ]; then
+    echo "run-drastic: no /run/banana/asound.conf: bananad hasn't set the sound route" >&2
+elif ! grep -q 'capture\.pcm *{ *type plug' /run/banana/asound.conf; then
+    echo "run-drastic: /run/banana/asound.conf has a capture.pcm without the 48 kHz plug: the mic may not start" >&2
+fi
 # the game's own shader (its page, X in the library: nds-game-shader), for this run only; a card shader from its folder
 gs=$(/usr/libexec/banana/nds-game-shader "$1")
 if [ -n "$gs" ]; then
