@@ -7,3 +7,7 @@
 *.o
 /banana-*.bundle
 /system/banana-cloud/target/
+
+# Python bytecode
+__pycache__/
+*.pyc
