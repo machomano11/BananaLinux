@@ -93,7 +93,8 @@ has "rc/roms/gba/Banana Run (USA).gba"
 bs rb sync > "$OUT/romm-kill.log" 2>&1 & KP=$!
 for i in $(seq 300); do case "$(st rb)" in running*) break;; esac; sleep 0.01; done
 if case "$(st rb)" in running*) true;; *) false;; esac; then
-    kill -TERM $KP; wait $KP 2>/dev/null
+    # (the background job is a subshell running bs: banana-sync is its child under dash, the job itself under bash)
+    pkill -TERM -P $KP 2>/dev/null; kill -TERM $KP 2>/dev/null; wait $KP 2>/dev/null
     [ "$(st rb)" = "error stopped" ] || bad "a killed sync left the status: $(st rb)"
 else
     wait $KP; echo "note: the sync ended before it could be killed ($(st rb)): the kill case not checked this run"
