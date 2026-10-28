@@ -31,6 +31,7 @@ shared with Slot on the TrimUI Brick and the RG SP. Put the same cloudsync.ini a
     password=secret
 (roms=0 leaves the games out; enabled=0 stops it). The saves and states sync on their own; Settings > Network >
 Cloud sync > Sync now does the games too; Cloud systems picks which systems this handheld syncs.
+A game deleted from the cloud isn't deleted here until you say so: Cloud sync lists such games and asks.
 File sharing never shows cloudsync.ini.
 
 SSH (for working on Banana itself): put your public key in banana/ssh/authorized_keys, switch on

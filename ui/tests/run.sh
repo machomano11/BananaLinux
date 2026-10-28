@@ -293,6 +293,19 @@ for size in 640x480 1024x768; do
     grep -qx 'id=rgds-1a2b' "$FX/data/cloudsync-device.ini" && grep -qx 'systems=GBA,GBC,NES,SNES,MD,PS,NDS' "$FX/data/cloudsync-device.ini" ||
         { echo "FAIL $size: Cloud systems wrote: $(cat "$FX/data/cloudsync-device.ini")"; fail=1; }
     rm -f "$FX/data/cloudsync-device.ini"
+    # games deleted from the cloud (banana-cloud's list): A on Cloud sync lists them, A on the first says delete it
+    # here too, the second stays kept, START writes both answers and runs the games' sync that carries them out
+    printf 'Games/GBA/Orchard Tactics.gba\nGames/NDS/Peel Quest (USA).nds\n' > "$FX/data/cloudsync-gone.txt"
+    rm -f "$FX/data/cloudsync-answers.txt" "$CR/cloud.ran"
+    run_cloud "wait 600; shot cloud-gone-row; press a; shot cloud-gone; press a; shot cloud-gone-delete; press start; wait 600; shot cloud-gone-done"
+    for i in 1 2 3 4 5 6 7 8 9 10; do [ -e "$CR/cloud.ran" ] && break; sleep 0.2; done
+    [ "$(cat "$FX/data/cloudsync-answers.txt" 2>/dev/null)" = "$(printf 'delete Games/GBA/Orchard Tactics.gba\nkeep Games/NDS/Peel Quest (USA).nds')" ] ||
+        { echo "FAIL $size: cloud deletions answered: $(cat "$FX/data/cloudsync-answers.txt" 2>/dev/null)"; fail=1; }
+    [ "$(cat "$CR/cloud.ran" 2>/dev/null)" = all ] || { echo "FAIL $size: the answers didn't run banana-cloud all"; fail=1; }
+    for s in cloud-gone-row cloud-gone cloud-gone-delete cloud-gone-done; do
+        [ -s "$OUT/$size-$s-top.png" ] && [ -s "$OUT/$size-$s-bot.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }
+    done
+    rm -f "$FX/data/cloudsync-gone.txt" "$FX/data/cloudsync-answers.txt"
     rm -f "$FX/data/cloudsync.ini"
     for s in cloud-off cloud-how cloud-running cloud-done cloud-started cloudsys-row cloudsys-off; do
         [ -s "$OUT/$size-$s-top.png" ] && [ -s "$OUT/$size-$s-bot.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }

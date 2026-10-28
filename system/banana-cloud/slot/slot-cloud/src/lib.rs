@@ -11,6 +11,10 @@
 //! - gone on one side and unchanged on the other: deleted there too, except
 //!   under `Saves`, `Games` and `Labels`, where nothing is ever deleted and
 //!   the missing copy comes back instead;
+//! - a game gone from the server, in a run that asks ([`sync_asking`]), is
+//!   neither deleted here nor sent back until someone answers: the run
+//!   lists it in [`Report::gone`], and the next run carries out the
+//!   [`Answer`];
 //! - a game or its art found on both sides with no history is taken to be
 //!   the same, and left as it is on each side rather than fetched to compare;
 //! - files written in the last few seconds wait for the next run;
@@ -67,6 +71,18 @@ const ROOM: u64 = 64 << 20;
 const SETTLE: Duration = Duration::from_secs(3);
 const MANIFEST_HEADER: &str = "slot-cloud 1";
 const CONFLICT: &str = ".conflict-";
+/// The manifest's tag for a game kept on this device after it left the
+/// server: it isn't sent back, nor asked about again.
+const HERE_ONLY: &str = "here-only";
+
+/// What to do with a game deleted from the server and still on this device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    /// Delete it here too.
+    Delete,
+    /// Keep it on this device only: it isn't sent back to the server.
+    Keep,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
@@ -190,6 +206,9 @@ pub struct Report {
     pub uploaded: usize,
     pub downloaded: usize,
     pub deleted: usize,
+    /// Games deleted from the server, still here, that wait for an
+    /// [`Answer`] (runs that ask only).
+    pub gone: Vec<String>,
     /// Files where both sides changed; the loser was kept as a conflict copy.
     pub conflicts: Vec<String>,
     /// What came down from the server, relative to the root.
@@ -321,6 +340,32 @@ pub fn sync_counted(
     sync_layout(&Card(root), manifest, remote, folders, cancel, held, tally)
 }
 
+/// [`sync_counted`] that asks before a game deleted from the server is
+/// deleted here or sent back: such games are left as they are and listed in
+/// [`Report::gone`], unless `answers` already has what to do with them.
+#[allow(clippy::too_many_arguments)]
+pub fn sync_asking(
+    layout: &dyn Layout,
+    manifest: &Path,
+    remote: &mut dyn Remote,
+    folders: &[&str],
+    cancel: &AtomicBool,
+    held: &dyn Fn(&str) -> bool,
+    tally: &Tally,
+    answers: &BTreeMap<String, Answer>,
+) -> Result<Report, Error> {
+    run_sync(
+        layout,
+        manifest,
+        remote,
+        folders,
+        cancel,
+        held,
+        tally,
+        Some(answers),
+    )
+}
+
 /// [`sync_counted`] for a device whose files are where `layout` says.
 pub fn sync_layout(
     layout: &dyn Layout,
@@ -331,12 +376,27 @@ pub fn sync_layout(
     held: &dyn Fn(&str) -> bool,
     tally: &Tally,
 ) -> Result<Report, Error> {
+    run_sync(layout, manifest, remote, folders, cancel, held, tally, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_sync(
+    layout: &dyn Layout,
+    manifest: &Path,
+    remote: &mut dyn Remote,
+    folders: &[&str],
+    cancel: &AtomicBool,
+    held: &dyn Fn(&str) -> bool,
+    tally: &Tally,
+    answers: Option<&BTreeMap<String, Answer>>,
+) -> Result<Report, Error> {
     let mut seen = read_manifest(manifest);
     let mut run = Run {
         layout,
         remote,
         cancel,
         tally,
+        answers,
         dirs: BTreeSet::new(),
         report: Report::default(),
         now: SystemTime::now(),
@@ -353,6 +413,8 @@ struct Run<'a> {
     remote: &'a mut dyn Remote,
     cancel: &'a AtomicBool,
     tally: &'a Tally,
+    /// Set when the run asks about games gone from the server.
+    answers: Option<&'a BTreeMap<String, Answer>>,
     /// Remote folders known to exist.
     dirs: BTreeSet<String>,
     report: Report,
@@ -412,7 +474,10 @@ impl Run<'_> {
                 let r = remote.get(&rel);
                 let step = match held(&rel) {
                     true => Step::Upload(l.filter(|&l| only_sent(&rel, l, r, seen.get(&rel)))?),
-                    false => plan(&rel, l, r, seen.get(&rel)),
+                    false => {
+                        let ask = self.answers.map(|a| a.get(&rel).copied());
+                        plan(&rel, l, r, seen.get(&rel), ask)
+                    }
                 };
                 Some((rel, step))
             })
@@ -462,6 +527,10 @@ impl Run<'_> {
     fn one(&mut self, rel: &str, step: Step) -> Result<Option<Seen>, Error> {
         Ok(match step {
             Step::Keep(s) => s,
+            Step::Ask(s) => {
+                self.report.gone.push(rel.to_string());
+                Some(s)
+            }
             Step::Upload(l) => Some(self.upload(rel, l)?),
             Step::Download(r) => Some(self.download(rel, r)?),
             Step::Both(l, r) => Some(self.both(rel, l, r)?),
@@ -684,6 +753,8 @@ fn in_folder(rel: &str, folder: &str) -> bool {
 enum Step<'r> {
     /// Nothing to copy; what to remember of it, if anything.
     Keep(Option<Seen>),
+    /// Gone from the server, and left as it is until someone answers.
+    Ask(Seen),
     Upload(Local),
     Download(&'r Listed),
     Both(Local, &'r Listed),
@@ -694,14 +765,36 @@ enum Step<'r> {
 impl Step<'_> {
     /// Whether it copies or deletes anything.
     fn moves(&self) -> bool {
-        !matches!(self, Step::Keep(_))
+        !matches!(self, Step::Keep(_) | Step::Ask(_))
     }
 }
 
-fn plan<'r>(rel: &str, l: Option<Local>, r: Option<&'r Listed>, s: Option<&Seen>) -> Step<'r> {
+/// `ask` is set when the run asks about games gone from the server, with
+/// the answer for this one if there is one.
+fn plan<'r>(
+    rel: &str,
+    l: Option<Local>,
+    r: Option<&'r Listed>,
+    s: Option<&Seen>,
+    ask: Option<Option<Answer>>,
+) -> Step<'r> {
     let keep = KEEP.iter().any(|k| rel.starts_with(&format!("{k}/")));
     let local_changed = |l: Local, s: &Seen| changed_since(l, s);
+    // A game kept here after it left the server is new again once the
+    // server has it again.
+    let s = s.filter(|s| s.tag != HERE_ONLY || r.is_none());
+    let asking = ask.filter(|_| in_folder(rel, GAMES));
     match (l, r, s) {
+        (Some(_), None, Some(s)) if s.tag == HERE_ONLY => Step::Keep(Some(s.clone())),
+        (Some(l), None, Some(s)) if asking.is_some() => match asking.flatten() {
+            Some(Answer::Delete) => Step::RemoveLocal,
+            Some(Answer::Keep) => Step::Keep(Some(Seen {
+                local: l.mtime_ns,
+                size: l.size,
+                tag: HERE_ONLY.into(),
+            })),
+            None => Step::Ask(s.clone()),
+        },
         (Some(l), Some(r), Some(s)) => match (local_changed(l, s), r.tag != s.tag) {
             (false, false) => Step::Keep(Some(s.clone())),
             (true, false) => Step::Upload(l),
@@ -1115,7 +1208,8 @@ mod tests {
                 rel,
                 Some(read(1_792_478_786_000_000_000, 8)),
                 Some(&r),
-                Some(&seen)
+                Some(&seen),
+                None
             ),
             Step::Keep(_)
         ));
