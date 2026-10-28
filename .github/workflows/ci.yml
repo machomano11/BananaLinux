@@ -44,7 +44,7 @@ jobs:
           mkdir -p /tmp/dav && (/tmp/venv/bin/wsgidav --host 127.0.0.1 --port 8089 --root /tmp/dav --auth anonymous &) && sleep 3
           BANANA_WEBDAV_URL=http://127.0.0.1:8089/ci cargo +1.88 test --locked --test with_slot -- --ignored
       - name: Shell scripts parse
-        run: for f in system/rootfs/etc/init.d/* system/rootfs/usr/bin/* system/rootfs/usr/libexec/banana/* system/rootfs/etc/banana/sleep.d/* buildroot/board/rgds/*.sh tools/*.sh; do sh -n "$f" || exit 1; done
+        run: for f in system/rootfs/etc/init.d/* system/rootfs/usr/bin/* system/rootfs/usr/libexec/banana/* system/rootfs/etc/banana/sleep.d/* buildroot/board/rgds/*.sh tools/*.sh; do case "$(head -n1 "$f")" in "#!"*python*) continue;; esac; sh -n "$f" || exit 1; done
       - name: Buildroot defconfigs keep every option
         run: |
           git clone --depth 1 --branch 2026.02.3 https://github.com/buildroot/buildroot /tmp/br
