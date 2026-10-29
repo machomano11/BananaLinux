@@ -1,3 +1,3 @@
 Slot's cloud sync (crates/slot-cloud and crates/slot-net), imported by tools/import-slot-cloud.sh. Don't edit these
 files here: change them in Slot and import again, so every device syncs the same way.
-Slot commit: 13491f08c0402261d85fb29c08319e29f451b9fa
+Slot commit: c41d484c9eb1e75fe13af791f33957b7db1e1dab
