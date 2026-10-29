@@ -21,6 +21,15 @@ namespace banana
 		std::vector<System> systems(const std::string& dataDir);
 		// writes the choice back (no systems= when all are picked, so a system added later syncs too)
 		bool setSystems(const std::string& dataDir, const std::vector<System>& all);
+		// the games deleted from the server and still on the card, waiting for an answer: banana/cloudsync-gone.txt
+		// (banana-cloud lists them there after a run of the games), less the ones already answered. Their server
+		// paths: "Games/GBA/Zelda.gba"
+		std::vector<std::string> gone(const std::string& dataDir);
+		// a game's name for a list: "Zelda (GBA)"
+		std::string goneName(const std::string& rel);
+		// the answers, for the next run of the games (banana/cloudsync-answers.txt): true deletes the game on the card
+		// too, false keeps it here only (it isn't sent back)
+		bool answer(const std::string& dataDir, const std::vector<std::pair<std::string, bool>>& answers);
 		// the running one stopped between files (a game is starting: it never writes under a game)
 		void stop();
 		bool running();

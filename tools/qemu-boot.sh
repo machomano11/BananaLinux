@@ -285,8 +285,9 @@ add_update() { mkdir -p "$DATA/banana/updates"; make_update "$DATA/banana/update
 with_data add_update
 boot third
 grep -q "rcS: slot a booted" "$OUT/serial.log" && ok "the third boot ran slot a" || bad "the third boot didn't say it ran slot a"
-# Start > System (L from the first group) > Update (the row under Time zone) > the package > A again to confirm
-key s pgup ret down ret; sleep 1; shot third-updates; key ret ret
+# Start > System (L from the first group) > Update (the third row: Language, Time zone, Update) > the package (the third
+# row there, under Check for updates and Test versions) > A again to confirm
+key s pgup ret down down ret; sleep 1; key down down; sleep 1; shot third-updates; key ret ret
 wait_for "written to slot b" 300 "the update was written to slot b and checked"
 sleep 2; shot third-updated
 key ret            # Restart
@@ -296,9 +297,9 @@ wait $QEMU 2>/dev/null || true
 boot fourth
 grep -q "rcS: slot b booted" "$OUT/serial.log" && ok "the fourth boot ran slot b: the update" || bad "the fourth boot didn't run slot b"
 shot fourth-menu
-# Start > System > Previous version (four rows under Time zone: Update, Box art, Box art from, Previous version;
-# checked headless) > A twice: back to slot a from the next boot
-key s pgup ret down down down down ret ret
+# Start > System > Previous version (the eighth row: Language, Time zone, Update, Test versions, Update check, Box art,
+# Box art from, Previous version; checked headless) > A twice: back to slot a from the next boot
+key s pgup ret down down down down down down down ret ret
 for i in $(seq 120); do kill -0 $QEMU 2>/dev/null || break; sleep 0.5; done
 kill -0 $QEMU 2>/dev/null && { bad "no restart from Previous version"; kill $QEMU; } || ok "restarted from Previous version"
 wait $QEMU 2>/dev/null || true

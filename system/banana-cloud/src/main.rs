@@ -15,6 +15,12 @@
 //! the server. Every run checks in at `Devices/<id>.ini` on the server with its name and those systems. What the last
 //! run saw: banana/cloudsync.manifest.
 //!
+//! A game deleted from the server isn't deleted here, nor sent back, until someone says which: a run of the games
+//! lists such games in banana/cloudsync-gone.txt (their server paths, `Games/GBA/x.gba`, one a line), banana-ui asks
+//! (Settings > Network > Cloud sync), and writes the answers in banana/cloudsync-answers.txt (`delete <path>` or
+//! `keep <path>`, a line each), which the next run of the games carries out and then removes. A game kept is kept on
+//! this handheld only: it isn't sent back.
+//!
 //! How it went is one line in /run/banana/cloud.status: "running <done> <total> <what>|<file>" while it runs, then
 //! "done <sent> <received> <conflicts> <skipped>", "offline <why>", "error <why>" or "off" (no account). SIGTERM
 //! stops it between files (a game is starting; the running one's pid is in /run/banana/cloud.lock). One run at a
@@ -23,14 +29,14 @@
 
 use banana_cloud::layout;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use slot_cloud::devices::{self, Device};
-use slot_cloud::{Account, Report, Tally};
+use slot_cloud::{Account, Answer, Report, Tally};
 
 static CANCEL: AtomicBool = AtomicBool::new(false);
 
@@ -78,9 +84,12 @@ fn main() {
         card = card.only(picked);
     }
     let mut folders = slot_cloud::PROGRESS.to_vec();
-    if all && account.games {
+    let games = all && account.games;
+    if games {
         folders.push(slot_cloud::GAMES);
     }
+    let answers_file = data.join("banana/cloudsync-answers.txt");
+    let answers = read_answers(&answers_file);
     eprintln!(
         "banana-cloud: syncing {} of {} with {}",
         folders.join(", "),
@@ -111,13 +120,28 @@ fn main() {
                 std::thread::sleep(Duration::from_millis(500));
             }
         });
-        let r = slot_cloud::sync_layout(&card, &manifest, &mut remote, &folders, &CANCEL, &|_| false, &tally);
+        let r = slot_cloud::sync_asking(
+            &card,
+            &manifest,
+            &mut remote,
+            &folders,
+            &CANCEL,
+            &|_| false,
+            &tally,
+            &answers,
+        );
         done.store(true, Ordering::Relaxed);
         r
     });
     match result {
         Ok(r) => {
             log(&r);
+            // what waits for an answer, after a run that looked at the games all the way through (the answers it was
+            // given are carried out by then)
+            if games && !r.cancelled {
+                write_lines(&data.join("banana/cloudsync-gone.txt"), &r.gone);
+                let _ = std::fs::remove_file(&answers_file);
+            }
             status.set(&format!(
                 "done {} {} {} {}",
                 r.uploaded,
@@ -217,6 +241,37 @@ fn log(r: &Report) {
     }
     for rel in &r.no_room {
         eprintln!("banana-cloud: no room on the card for {rel}");
+    }
+    for rel in &r.gone {
+        eprintln!(
+            "banana-cloud: {rel} was deleted from the server: waiting for an answer (Settings > Network > Cloud sync)"
+        );
+    }
+}
+
+/// banana/cloudsync-answers.txt: `delete <server path>` or `keep <server path>`, a line each.
+fn read_answers(path: &Path) -> BTreeMap<String, Answer> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    text.lines()
+        .filter_map(|l| l.trim_end().split_once(' '))
+        .filter_map(|(a, rel)| match a {
+            "delete" => Some((rel.to_string(), Answer::Delete)),
+            "keep" => Some((rel.to_string(), Answer::Keep)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The lines in a file, written beside and renamed over; none: no file.
+fn write_lines(path: &Path, lines: &[String]) {
+    if lines.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    let tmp = path.with_extension("tmp");
+    let written = std::fs::write(&tmp, lines.iter().map(|l| format!("{l}\n")).collect::<String>());
+    if written.and_then(|_| std::fs::rename(&tmp, path)).is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
 }
 

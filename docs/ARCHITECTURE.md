@@ -181,6 +181,10 @@ now runs it with the games, following `/run/banana/cloud.status`; that run keeps
 `Devices/<id>.ini` on the server, as on Slot; without it, every system, and empty, none. Settings > Network > Cloud systems ticks them.
 A system left out is left alone on the card and on the server (the layout keeps none of its files), so nothing is
 deleted anywhere when one is unticked.
+A game deleted from the server is neither deleted on the card nor sent back until someone answers: a run of the
+games lists such games in `banana/cloudsync-gone.txt`, Cloud sync then shows "N deleted in the cloud" and A lists them
+(Delete here too, or Keep on this handheld only), and START writes `banana/cloudsync-answers.txt` and runs the games'
+sync, which carries the answers out (slot-cloud's `sync_asking`; a game kept is remembered as here-only and not sent back).
 
 **File sharing** (Settings > Network): the card's data partition as `\\<address>\banana` over SMB3, served by
 the kernel (`ksmbd`, a module loaded only when sharing is switched on) and ksmbd-tools' `ksmbd.mountd`, as a guest

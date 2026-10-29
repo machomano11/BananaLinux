@@ -168,7 +168,7 @@ namespace banana
 		std::string about, wifiInfo, ip;
 
 		// the Wi-Fi pages: the networks around, and the keyboard for a password (settings-wifi.cpp)
-		enum Page { LIST, NETWORKS, KEYBOARD, UPDATES, SETUP, GAME, ARTPICK, COLORS, BLUETOOTH, THEMES, CREDITS, PICKGAMES, CLOUD_SYSTEMS } page = LIST;
+		enum Page { LIST, NETWORKS, KEYBOARD, UPDATES, SETUP, GAME, ARTPICK, COLORS, BLUETOOTH, THEMES, CREDITS, PICKGAMES, CLOUD_SYSTEMS, CLOUD_GONE } page = LIST;
 		// Home server > Choose games: the server's games (banana-sync games), a system at a time, ticked to sync
 		struct PickGame { std::string sys, key, title; long long bytes = 0; bool on = false, there = false; };
 		std::vector<PickGame> pickGames;
@@ -512,6 +512,14 @@ namespace banana
 		void openCloudSystems();
 		Result pressCloudSystems(Key k);
 		void renderCloudSystems();
+		// games deleted from the server and still here (cloud::gone): A on Cloud sync lists them with a warning, A on one
+		// says delete it here too or keep it here only, START sends the answers to the next sync of the games and runs it
+		std::vector<std::string> cgone;		// as last read (pollCloud), for the row
+		std::vector<bool> cgDelete;			// the page's answers, by cgone's order
+		int cgsel = 0;
+		void openCloudGone();
+		Result pressCloudGone(Key k);
+		void renderCloudGone();
 		struct RaWatch;							// the achievements: RetroArch's log and the server (settings.cpp)
 		std::shared_ptr<RaWatch> raw;
 		std::string gTitle, gSystem;

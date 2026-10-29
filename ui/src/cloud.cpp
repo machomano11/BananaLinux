@@ -151,6 +151,52 @@ namespace banana
 			return rename(tmp.c_str(), deviceFile(dataDir).c_str()) == 0;
 		}
 
+		static std::vector<std::string> lines(const std::string& path)
+		{
+			std::vector<std::string> out;
+			std::ifstream f(path);
+			std::string ln;
+			while (std::getline(f, ln))
+			{
+				while (!ln.empty() && ln.back() == '\r') ln.pop_back();
+				if (!ln.empty()) out.push_back(ln);
+			}
+			return out;
+		}
+
+		std::vector<std::string> gone(const std::string& dataDir)
+		{
+			std::vector<std::string> answered;
+			for (auto& a : lines(dataDir + "/cloudsync-answers.txt"))
+				if (a.find(' ') != std::string::npos) answered.push_back(a.substr(a.find(' ') + 1));
+			std::vector<std::string> out;
+			for (auto& g : lines(dataDir + "/cloudsync-gone.txt"))
+			{
+				bool done = false;
+				for (auto& a : answered) done |= a == g;
+				if (!done) out.push_back(g);
+			}
+			return out;
+		}
+
+		std::string goneName(const std::string& rel)
+		{
+			// Games/<system>/<file>: the file without its extension, then the system
+			size_t a = rel.find('/'), b = a == std::string::npos ? a : rel.find('/', a + 1);
+			if (b == std::string::npos) return rel;
+			std::string sys = rel.substr(a + 1, b - a - 1), file = rel.substr(rel.rfind('/') + 1);
+			size_t dot = file.rfind('.');
+			if (dot != std::string::npos && dot > 0) file.erase(dot);
+			return file + " (" + sys + ")";
+		}
+
+		bool answer(const std::string& dataDir, const std::vector<std::pair<std::string, bool>>& answers)
+		{
+			std::ofstream o(dataDir + "/cloudsync-answers.txt", std::ios::app);
+			for (auto& a : answers) o << (a.second ? "delete " : "keep ") << a.first << "\n";
+			return (bool)o.flush();
+		}
+
 		void stop()
 		{
 			if (pid_t pid = runningPid()) kill(pid, SIGTERM);
