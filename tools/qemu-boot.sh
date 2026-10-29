@@ -150,8 +150,8 @@ boot() {    # boot <name>: start the VM (with the kernel and root the card's ext
     wait_for "banana-ui: the menu" 240 "$1: the menu is up" || { cat "$OUT/serial.log" | tail -n 30; kill $QEMU 2>/dev/null; return 1; }
     sleep 3
 }
-shutdown_from_settings() {  # Start (the groups) > L (wraps to the last, System) > A > Up (wraps to its last row, Shut
-    key s pgup ret up ret ret  # down) > A twice; the VM powers off
+shutdown_from_settings() {  # Start (the groups) > L (wraps to the last, System) > A > Up twice (wraps to its last row,
+    key s pgup ret up up ret ret  # Hotkeys, then Shut down above it) > A twice; the VM powers off
     for i in $(seq 120); do kill -0 $QEMU 2>/dev/null || { ok "$1: shut down from the settings, the VM powered off"; wait $QEMU 2>/dev/null; return 0; }; sleep 0.5; done
     bad "$1: still running 60 s after the shutdown"; kill $QEMU 2>/dev/null; return 1
 }
