@@ -1035,7 +1035,7 @@ namespace banana
 			if (it.key == "hs_sync") { if (syncing()) stopSync(); else startSync(); return MOVED; }
 			if (it.key == "hs_pick") { openPickGames(); return MOVED; }
 			if (it.key == "credits") { openCredits(); return MOVED; }
-			if (it.key == "cloud") { startCloud(); return MOVED; }
+			if (it.key == "cloud") { if (!cgone.empty() && !cloudSyncing()) openCloudGone(); else startCloud(); return MOVED; }
 			if (it.key == "cloudsys") { openCloudSystems(); return MOVED; }
 			if (it.key == "update") openUpdates(); else if (it.key == "setup") openSetup(false, ""); else openNetworks();
 			return MOVED;
@@ -1237,6 +1237,7 @@ namespace banana
 		if (page == COLORS) return pressColors(k);
 		if (page == UPDATES) return pressUpdates(k);
 		if (page == CLOUD_SYSTEMS) return pressCloudSystems(k);
+		if (page == CLOUD_GONE) return pressCloudGone(k);
 		if (page == SETUP) return pressSetup(k);
 		if (page == THEMES) return pressThemes(k);
 		if (page == CREDITS) return pressCredits(k);
@@ -1956,6 +1957,7 @@ namespace banana
 		if (page == COLORS) { renderColors(); return; }
 		if (page == UPDATES) { renderUpdates(); return; }
 		if (page == CLOUD_SYSTEMS) { renderCloudSystems(); return; }
+		if (page == CLOUD_GONE) { renderCloudGone(); return; }
 		if (page == SETUP) { renderSetup(); return; }
 		if (page == THEMES) { renderThemes(); return; }
 		if (page == CREDITS) { renderCredits(); return; }
@@ -2034,7 +2036,7 @@ namespace banana
 			else if (it.kind == Item::PAGE && it.key == "scrape") v = scrapeShort();
 			else if (it.kind == Item::PAGE && (it.key == "homesync" || it.key == "hs_server")) v = hsStep ? "Pairing" : homeServer().empty() ? "Not paired" : fit(homeServer(), true, 19, 300);
 			else if (it.kind == Item::PAGE && it.key == "hs_sync") v = syncShort();
-			else if (it.kind == Item::PAGE && it.key == "cloud") v = cloud::summary(cloudLine, cloud::configured(data));
+			else if (it.kind == Item::PAGE && it.key == "cloud") v = !cgone.empty() && !cloudSyncing() ? std::to_string(cgone.size()) + " deleted in the cloud" : cloud::summary(cloudLine, cloud::configured(data));
 			else if (it.kind == Item::PAGE && it.key == "cloudsys" && cloud::configured(data))
 			{
 				auto s = cloud::systems(data);
@@ -2059,7 +2061,7 @@ namespace banana
 		be->popClip();
 		float bw = faceWidth("B", "Back");
 		face("B", "Back", 18, bw);
-		std::string act = cur.kind == Item::ACTION ? (armed == sel ? "Confirm" : cur.label) : cur.kind == Item::INFO ? "" : cur.key == "scrape" ? (scraping() ? "" : "Start") : cur.key == "hs_sync" ? (syncing() ? "Stop" : "Start") : cur.key == "hs_server" ? (hsStep ? "" : "Pair") : cur.key == "cloud" ? (cloudSyncing() ? "" : "Sync now") : cur.kind == Item::PAGE ? "Open" : "Change";
+		std::string act = cur.kind == Item::ACTION ? (armed == sel ? "Confirm" : cur.label) : cur.kind == Item::INFO ? "" : cur.key == "scrape" ? (scraping() ? "" : "Start") : cur.key == "hs_sync" ? (syncing() ? "Stop" : "Start") : cur.key == "hs_server" ? (hsStep ? "" : "Pair") : cur.key == "cloud" ? (cloudSyncing() ? "" : cgone.empty() ? "Sync now" : "Review") : cur.kind == Item::PAGE ? "Open" : "Change";
 		if (!act.empty())
 		{
 			float aw = faceWidth("A", act);
@@ -5818,10 +5820,13 @@ namespace banana
 	{
 		if (t < cloudNext) return false;
 		cloudNext = t + 500;
+		auto g = cloud::gone(data);
+		bool goneChanged = g != cgone;
+		cgone = std::move(g);
 		std::string ln = cloud::status();
 		// a run that is gone (crashed or killed) without its last word
 		if (ln.compare(0, 8, "running ") == 0 && !cloud::running()) ln = "error stopped";
-		if (ln == cloudLine) return false;
+		if (ln == cloudLine) return goneChanged;
 		bool was = cloudSyncing();
 		cloudLine = ln;
 		if (was && !cloudSyncing() && cloudWatching)
@@ -5853,9 +5858,115 @@ namespace banana
 		if (!cloud::configured(data))
 			return "Keeps your saves, save states and games on your own WebDAV server, shared with Slot on the TrimUI Brick and "
 				"the RG SP. To set it up, copy Slot's cloudsync.ini (url, username and password) into the banana folder on the card.";
+		if (!cgone.empty())
+			return std::to_string(cgone.size()) + (cgone.size() == 1 ? " game was" : " games were") + " deleted from the cloud but "
+				"are still on this handheld. A lists them: for each, delete it here too or keep it on this handheld only. Until "
+				"then they are left as they are, and not sent back.";
 		return "Your saves and save states sync on their own: when the menu starts, after each game and every 10 minutes. "
 			"Sync now does the games too (roms=0 in banana/cloudsync.ini leaves them out). A file changed on two handhelds "
 			"keeps the newer copy, and the older one stays beside it as a .conflict file.";
+	}
+
+	// ---- games deleted from the cloud: delete them here too, or keep them here only ------------------------------
+	void Settings::openCloudGone()
+	{
+		message.clear();
+		cgone = cloud::gone(data);
+		if (cgone.empty()) return;
+		cgDelete.assign(cgone.size(), false);
+		cgsel = 0;
+		page = CLOUD_GONE;
+	}
+
+	Settings::Result Settings::pressCloudGone(Key k)
+	{
+		int n = (int)cgone.size();
+		switch (k)
+		{
+		case Key::UP: case Key::DOWN:
+			if (!n) return NONE;
+			cgsel = (cgsel + (k == Key::UP ? -1 : 1) + n) % n;
+			return MOVED;
+		case Key::A: case Key::RIGHT:
+			if (!n) return NONE;
+			cgDelete[cgsel] = !cgDelete[cgsel];
+			return MOVED;
+		case Key::X:
+		{
+			// every one the same: all deleted here, or (again) all kept
+			bool all = std::find(cgDelete.begin(), cgDelete.end(), false) == cgDelete.end();
+			cgDelete.assign(n, !all);
+			return MOVED;
+		}
+		case Key::START:
+		{
+			std::vector<std::pair<std::string, bool>> a;
+			int del = 0;
+			for (int i = 0; i < n; i++) { a.push_back({ cgone[i], (bool)cgDelete[i] }); del += cgDelete[i]; }
+			page = LIST;
+			if (!cloud::answer(data, a)) { message = "Couldn't save that on the card."; return MOVED; }
+			cgone.clear();
+			startCloud();
+			if (message.empty())
+				message = del == n ? "Deleting them from this handheld too, now." : !del ? "Kept on this handheld only: they won't be sent back to the cloud."
+					: "Deleting " + std::to_string(del) + " from this handheld, keeping " + std::to_string(n - del) + " here only.";
+			else message = "Saved: it happens at the next Sync now. " + message;
+			return MOVED;
+		}
+		case Key::B: case Key::LEFT:
+			page = LIST;
+			return MOVED;
+		default: return NONE;
+		}
+	}
+
+	void Settings::renderCloudGone()
+	{
+		SPal p = pal(light);
+		int del = 0;
+		for (bool d : cgDelete) del += d;
+		const int n = (int)cgone.size();
+		be->beginScreen(0);
+		box("screen", false, 0, 0, 640, 480);
+		box("hero", false, 18, 20, 604, 436);
+		icon("phone", 50, HEAD_ICON_Y, 3);
+		text("Cloud sync", true, 17, 170, HEAD_SECTION_Y, p.muted, true, 1.4f);
+		textFit("Deleted from the cloud", true, 30, 170, HEAD_LABEL_Y, 420, p.ink, true);
+		std::string st = del == n ? "Delete all here too" : !del ? "Keep all here" : "Delete " + std::to_string(del) + ", keep " + std::to_string(n - del);
+		textFit(st, true, 22, 170, HEAD_VALUE_Y, 420, p.accent, true);
+		helpText(std::to_string(n) + (n == 1 ? " game was" : " games were") + " deleted from the cloud, maybe on another handheld, "
+			"and are still on this one. A on a game: Delete deletes it here too, Keep keeps it on this handheld only (it isn't "
+			"sent back). X sets them all. START does it.", HELP_TOP, HELP_BOTTOM, p.muted);
+		be->endScreen();
+
+		be->beginScreen(1);
+		box("screen", false, 0, 0, 640, 480);
+		box("bubble", false, 18, 14, 604, 54);
+		text("Deleted from the cloud", true, 22, 38, 28, p.ink);
+		int top = std::max(0, std::min(cgsel - ROWS + 1, n - ROWS));
+		for (int r = 0; r < ROWS && top + r < n; r++)
+		{
+			int i = top + r;
+			bool on = i == cgsel;
+			float y = 82 + r * 64;
+			box(on ? "pick" : "slot", on, 18, y, 604, 56);
+			Color c = on ? p.onPick : p.muted;
+			std::string tag = cgDelete[i] ? "Delete" : "Keep";
+			float tw = text(tag, true, 17, 0, 0, c, false, 0, true);
+			textFit(cloud::goneName(cgone[i]), true, 20, 38, y + 16, 586 - tw - 16 - 38, c, on);
+			text(tag, true, 17, 586 - tw, y + 18, cgDelete[i] ? (on ? p.onPickAccent : p.accent) : c);
+		}
+		float bw = faceWidth("B", "Back");
+		face("B", "Back", 18, bw);
+		float sw = faceWidth("START", "Done");
+		face("START", "Done", 622 - sw, sw);
+		if (n)
+		{
+			std::string act = cgDelete[cgsel] ? "Keep" : "Delete";
+			float aw = faceWidth("A", act);
+			face("A", act, 622 - sw - 12 - aw, aw);
+		}
+		be->endScreen();
 	}
 
 	// ---- cloud systems: which systems this handheld syncs ---------------------------------------------------------

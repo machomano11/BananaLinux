@@ -100,7 +100,8 @@ else
     wait $KP; echo "note: the sync ended before it could be killed ($(st rb)): the kill case not checked this run"
 fi
 # a download cut short goes on from its .part (a Range request), and is checked whole
-mkdir -p "$OUT/rb/roms/nds"; head -c 1000 "$L/nds/Peel Quest (USA).nds" > "$OUT/rb/roms/nds/Peel Quest (USA).nds.part"
+# (from scratch: the killed sync above may have got some games down before it stopped)
+rm -rf "$OUT/rb/roms"; mkdir -p "$OUT/rb/roms/nds"; head -c 1000 "$L/nds/Peel Quest (USA).nds" > "$OUT/rb/roms/nds/Peel Quest (USA).nds.part"
 printf 'homesync.gba = off\nhomesync.psx = off\n' > "$OUT/rb/banana/settings.conf"
 bs rb sync >/dev/null 2>&1
 curl -s "$U/test/log" | grep -q 'Peel%20Quest%20%28USA%29.nds? range=bytes=1000-' || bad "no Range request for the .part"
