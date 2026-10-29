@@ -7,6 +7,10 @@ for example banana/themes/my-theme.json. Pick it in Settings > Display & sound >
 /usr/share/banana/themes, and copies are in banana/themes on a new card) and change it. A file on the card with an
 example's file name replaces that example.
 
+Ten more come with the system (0.5.0), made with the Banana Theme Studio, which draw the whole menu in their own
+layout: comic-panel, coral-reef, felt-table, neon-arcade, oak-bookshelf, orbital-hud, paper-notebook,
+phosphor-terminal, swiss-poster and vinyl-lounge. Open one in the Theme Studio to make your own from it.
+
     {
       "name": "My theme",          the name shown in Settings (else the file name)
       "author": "you",             (shown nowhere yet)
@@ -65,6 +69,13 @@ Other           meterBg (the battery and progress meters), brandBg (behind the l
                 on-screen keyboard's keys and letters), blackish, shade35, shade40, shade45 (shadows)
 Settings        onPick (text on the selected row), onPickAccent (accented text on it), and the ones above that
                 Settings uses too: ink, muted, line, edge, screen*, ditherA/B, panel*, bubble*, slotOn, kbd*
+
+Layout themes
+-------------
+A theme with "screens" in it draws the whole menu itself: every element on both screens, where it goes, how it
+looks and how it moves, from the menu's data (the systems, the games, the selection, the clock, the battery...).
+canvas.json is one. In Banana's source (github.com/JorreFog/BananaLinux): docs/MAKE-A-THEME.md starts from the
+beginning, with the theme editor, and docs/THEMES.md describes the format exactly.
 
 Themes apply to the Dark/Light style (ROCKNIXDS Pixel) and to Settings (its colours and fonts); the Carts theme
 keeps its own look for now. theme-builder.html, next to this file, makes a theme in a web browser with a live

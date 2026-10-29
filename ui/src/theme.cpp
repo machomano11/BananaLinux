@@ -11,7 +11,8 @@
 
 namespace banana
 {
-	static const char* CARD_DIR = "/data/banana/themes";
+	// (BANANA_THEMES: another folder for the card's, the host's tests)
+	static const char* const CARD_DIR = getenv("BANANA_THEMES") && *getenv("BANANA_THEMES") ? getenv("BANANA_THEMES") : "/data/banana/themes";
 	static const char* IMAGE_DIR = "/usr/share/banana/themes";
 
 	// ---- a small JSON reader: objects, strings, numbers, true/false/null, arrays skipped; enough for a theme --------
@@ -115,6 +116,13 @@ namespace banana
 		return std::string(IMAGE_DIR) + "/" + stem + ".json";
 	}
 
+	std::string themePath(const std::string& value)
+	{
+		if (value.compare(0, 5, "user:") == 0) return pathFor(value.substr(5));
+		if (value.compare(0, 5, "file:") == 0) return value.substr(5);
+		return "";
+	}
+
 	std::vector<UserTheme> userThemes()
 	{
 		std::vector<UserTheme> r;
@@ -175,11 +183,21 @@ namespace banana
 		return p;
 	}
 
+	std::string themePreview(const std::string& value)
+	{
+		std::string path = themePath(value);
+		if (path.empty()) return "";
+		std::map<std::string, std::string> kv;
+		if (!readTheme(path, kv, nullptr) || kv["preview"].empty()) return "";
+		return themeImage(path.substr(0, path.rfind('/')), kv["preview"]);
+	}
+
 	bool themeSetsAccent(const std::string& value)
 	{
-		if (value.compare(0, 5, "user:") != 0) return false;
+		std::string path = themePath(value);
+		if (path.empty()) return false;
 		std::map<std::string, std::string> kv;
-		if (!readTheme(pathFor(value.substr(5)), kv, nullptr)) return false;
+		if (!readTheme(path, kv, nullptr)) return false;
 		uint32_t c;
 		return parseColor(kv["accent"], c) || parseColor(kv["accent.base"], c) || !kv["accent"].empty();
 	}
@@ -189,9 +207,9 @@ namespace banana
 		rnds::themeColors.clear();
 		rnds::themeFiles = rnds::ThemeFiles();
 		rnds::setAccent(accentName);
-		if (value.compare(0, 5, "user:") != 0) return value == "light" ? "light" : value == "carts" ? "carts" : "dark";
+		std::string path = themePath(value);
+		if (path.empty()) return value == "light" ? "light" : value == "carts" ? "carts" : "dark";
 		std::map<std::string, std::string> kv;
-		std::string path = pathFor(value.substr(5));
 		if (!readTheme(path, kv, why)) return "dark";
 		std::string dir = path.substr(0, path.rfind('/'));
 		std::string base = kv["base"] == "light" ? "light" : "dark";
